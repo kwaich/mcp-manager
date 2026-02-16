@@ -146,7 +146,16 @@ router.get('/cursor-config', async (req, res) => {
                 }
             }
         });
-        
+
+        // Sync disabled state with Claude Desktop config
+        // If a server is not in Claude Desktop's config, mark it as disabled
+        const claudeServerNames = Object.keys(claudeConfig.mcpServers || {});
+        Object.entries(mergedServers).forEach(([name, config]) => {
+            if (!claudeServerNames.includes(name)) {
+                mergedServers[name].disabled = true;
+            }
+        });
+
         console.log('Returning merged config with servers:', Object.keys(mergedServers));
         res.json({ 
             mcpServers: mergedServers,
@@ -290,10 +299,12 @@ router.post('/save-configs', async (req, res) => {
 
         // Save filtered config to Claude settings (removing disabled servers and internal metadata)
         const filteredConfig = filterDisabledServers(fullConfig);
-        delete filteredConfig._removedDefaults; // Strip internal tracking from Claude config
-        console.log('Filtered config for Claude:', JSON.stringify(filteredConfig, null, 2));
+        // Read existing Claude Desktop config to preserve non-mcpServers fields
+        const existingClaudeConfig = await readConfigFile(CLAUDE_CONFIG_PATH);
+        const mergedClaudeConfig = { ...existingClaudeConfig, mcpServers: filteredConfig.mcpServers };
+        console.log('Filtered config for Claude:', JSON.stringify(mergedClaudeConfig, null, 2));
         try {
-            await fs.writeFile(CLAUDE_CONFIG_PATH, JSON.stringify(filteredConfig, null, 2));
+            await fs.writeFile(CLAUDE_CONFIG_PATH, JSON.stringify(mergedClaudeConfig, null, 2));
             console.log('Saved config to Claude settings');
         } catch (error) {
             if (error.code === 'ENOENT') {
