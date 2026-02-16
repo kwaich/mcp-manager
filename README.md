@@ -5,8 +5,11 @@ A web-based GUI tool for managing Model Context Protocol (MCP) servers in Claude
 ## Features
 
 - 🎛️ Enable/disable MCP servers with simple toggle switches
+- ➕ Add, edit, and remove custom MCP servers via a modal UI
 - 🔄 Changes are automatically synced between Claude and Cursor
+- ⚙️ Toggle Cursor integration on/off from the Settings panel
 - 🛠️ View available tools for each server
+- 🗑️ Remove servers with the ability to restore them later
 - 🔒 Secure handling of environment variables and API keys
 - 📱 Responsive design that works on any screen size
 
@@ -39,9 +42,10 @@ npm start
 
 ## Configuration
 
-The MCP Server Manager uses two configuration files:
+The MCP Server Manager uses the following configuration files:
 
-- `config.json`: Main configuration file for the server
+- `config.json`: Default server definitions (copy from `config.example.json`)
+- `settings.json`: App settings such as the Cursor integration toggle (created automatically on first use)
 - Claude config: Located at `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 - Cursor config: Located at `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` (macOS)
 
@@ -65,8 +69,11 @@ The MCP Server Manager uses two configuration files:
 
 1. Launch the MCP Server Manager
 2. Use the toggle switches to enable/disable servers
-3. Click "Save Changes" to apply your changes
-4. Restart Claude to activate the new configuration
+3. Click "+ Add Server" to add a custom MCP server
+4. Use the Edit/Remove buttons on server cards to manage existing servers
+5. Expand the Settings panel to enable/disable Cursor integration
+6. Click "Save Changes" to apply your changes
+7. Restart Claude to activate the new configuration
 
 ## Keywords
 
