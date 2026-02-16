@@ -48,40 +48,17 @@ async function readConfigFile(filePath) {
     }
 }
 
-// Helper function to merge configurations
-function mergeConfigs(savedConfig, defaultConfig) {
-    console.log('Merging configs:');
-    console.log('Saved servers:', Object.keys(savedConfig.mcpServers || {}));
-    console.log('Default servers:', Object.keys(defaultConfig));
-    
-    const mergedServers = {};
-    
-    // Start with all default servers
-    Object.entries(defaultConfig).forEach(([name, config]) => {
-        mergedServers[name] = { ...config };
-    });
-    
-    // Override with saved configurations
-    Object.entries(savedConfig.mcpServers || {}).forEach(([name, config]) => {
-        mergedServers[name] = {
-            ...mergedServers[name],
-            ...config
-        };
-    });
-    
-    console.log('Merged servers:', Object.keys(mergedServers));
-    return { mcpServers: mergedServers };
-}
-
-// Helper function to filter out disabled servers
+// Helper function to filter out disabled servers and internal metadata
 function filterDisabledServers(config) {
+    // Internal metadata keys that should not be written to external config files
+    const internalKeys = ['disabled', 'custom', '_removedFromDefaults'];
     const filteredConfig = { mcpServers: {} };
     
     Object.entries(config.mcpServers).forEach(([name, server]) => {
         // Only include servers that are not disabled
         if (!server.disabled) {
-            // Create a new server object without the disabled property
-            const { disabled, ...serverConfig } = server;
+            const serverConfig = { ...server };
+            internalKeys.forEach(key => delete serverConfig[key]);
             filteredConfig.mcpServers[name] = serverConfig;
         } else {
             console.log(`Filtering out disabled server: ${name}`);
@@ -95,12 +72,56 @@ function filterDisabledServers(config) {
 // Get cursor config
 router.get('/cursor-config', async (req, res) => {
     console.log('Handling /api/cursor-config request');
+    // Merge precedence (highest to lowest):
+    // 1. Cursor saved config — user's explicit settings, wins for overlapping servers
+    // 2. Claude Desktop config — pulled in if server not already present
+    // 3. Default config (config.json) — base defaults, excluded if in removedDefaults
     try {
         const savedConfig = await readConfigFile(CURSOR_CONFIG_PATH);
+        const claudeConfig = await readConfigFile(CLAUDE_CONFIG_PATH);
         const defaultConfig = await readConfigFile(path.join(__dirname, 'config.json'));
-        const mergedConfig = mergeConfigs(savedConfig, defaultConfig.mcpServers || {});
-        console.log('Returning merged config with servers:', Object.keys(mergedConfig.mcpServers));
-        res.json(mergedConfig);
+        
+        // Get list of removed default servers
+        const removedDefaults = savedConfig._removedDefaults || [];
+        
+        // Merge default servers with saved servers
+        const mergedServers = {};
+        
+        // Add default servers (excluding removed ones)
+        Object.entries(defaultConfig.mcpServers || {}).forEach(([name, config]) => {
+            if (!removedDefaults.includes(name)) {
+                mergedServers[name] = { ...config };
+            }
+        });
+        
+        // Override with saved Cursor configurations and add custom servers
+        Object.entries(savedConfig.mcpServers || {}).forEach(([name, config]) => {
+            mergedServers[name] = {
+                ...mergedServers[name],
+                ...config
+            };
+            // Mark custom servers (servers not in defaults)
+            if (!defaultConfig.mcpServers?.[name]) {
+                mergedServers[name].custom = true;
+            }
+        });
+        
+        // Also add servers from Claude Desktop config if not already present
+        Object.entries(claudeConfig.mcpServers || {}).forEach(([name, config]) => {
+            if (!mergedServers[name]) {
+                mergedServers[name] = { ...config };
+                // Mark as custom if not in defaults
+                if (!defaultConfig.mcpServers?.[name]) {
+                    mergedServers[name].custom = true;
+                }
+            }
+        });
+        
+        console.log('Returning merged config with servers:', Object.keys(mergedServers));
+        res.json({ 
+            mcpServers: mergedServers,
+            removedDefaults: removedDefaults
+        });
     } catch (error) {
         console.error('Error in /api/cursor-config:', error);
         res.status(500).json({ error: `Failed to read Cursor config: ${error.message}` });
@@ -125,8 +146,25 @@ router.get('/tools', async (req, res) => {
     try {
         const cursorConfig = await readConfigFile(CURSOR_CONFIG_PATH);
         const defaultConfig = await readConfigFile(path.join(__dirname, 'config.json'));
-        const mergedConfig = mergeConfigs(cursorConfig, defaultConfig.mcpServers || {});
-        const servers = mergedConfig.mcpServers;
+        
+        // Simple two-way merge: defaults + Cursor overrides
+        const mergedServers = {};
+        Object.entries(defaultConfig.mcpServers || {}).forEach(([name, config]) => {
+            mergedServers[name] = { ...config };
+        });
+        Object.entries(cursorConfig.mcpServers || {}).forEach(([name, config]) => {
+            mergedServers[name] = { ...mergedServers[name], ...config };
+        });
+
+        // Also include servers from Claude Desktop config if not already present
+        const claudeConfig = await readConfigFile(CLAUDE_CONFIG_PATH);
+        Object.entries(claudeConfig.mcpServers || {}).forEach(([name, config]) => {
+            if (!mergedServers[name]) {
+                mergedServers[name] = { ...config };
+            }
+        });
+
+        const servers = mergedServers;
 
         // Define available tools for each server
         const toolsMap = {
@@ -165,19 +203,61 @@ router.get('/tools', async (req, res) => {
 router.post('/save-configs', async (req, res) => {
     console.log('Handling /api/save-configs request');
     try {
-        const { mcpServers } = req.body;
+        const { mcpServers, removedServers } = req.body;
         if (!mcpServers) {
             throw new Error('No server configuration provided');
         }
 
-        // Save full config to Cursor settings (for UI state)
-        const fullConfig = { mcpServers };
-        await fs.writeFile(CURSOR_CONFIG_PATH, JSON.stringify(fullConfig, null, 2));
+        // Load default config to identify removed defaults
+        const defaultConfig = await readConfigFile(path.join(__dirname, 'config.json'));
+        const defaultServerNames = Object.keys(defaultConfig.mcpServers || {});
+        
+        // Track which default servers have been removed
+        const removedDefaults = [];
+        if (removedServers) {
+            Object.keys(removedServers).forEach(name => {
+                if (defaultServerNames.includes(name)) {
+                    removedDefaults.push(name);
+                }
+            });
+        }
 
-        // Save filtered config to Claude settings (removing disabled servers)
+        // Create full config
+        const fullConfig = { 
+            mcpServers: mcpServers
+        };
+        
+        // Add removed defaults tracking if any exist
+        if (removedDefaults.length > 0) {
+            fullConfig._removedDefaults = removedDefaults;
+        }
+
+        // Save full config to Cursor settings (for UI state persistence)
+        try {
+            await fs.writeFile(CURSOR_CONFIG_PATH, JSON.stringify(fullConfig, null, 2));
+            console.log('Saved config to Cursor settings');
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                console.log('Cursor config path does not exist, skipping:', CURSOR_CONFIG_PATH);
+            } else {
+                console.warn('Failed to save Cursor config:', error.message);
+            }
+        }
+
+        // Save filtered config to Claude settings (removing disabled servers and internal metadata)
         const filteredConfig = filterDisabledServers(fullConfig);
+        delete filteredConfig._removedDefaults; // Strip internal tracking from Claude config
         console.log('Filtered config for Claude:', JSON.stringify(filteredConfig, null, 2));
-        await fs.writeFile(CLAUDE_CONFIG_PATH, JSON.stringify(filteredConfig, null, 2));
+        try {
+            await fs.writeFile(CLAUDE_CONFIG_PATH, JSON.stringify(filteredConfig, null, 2));
+            console.log('Saved config to Claude settings');
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                console.log('Claude config path does not exist, skipping:', CLAUDE_CONFIG_PATH);
+            } else {
+                console.warn('Failed to save Claude config:', error.message);
+            }
+        }
 
         console.log('Configurations saved successfully');
         res.json({ 
