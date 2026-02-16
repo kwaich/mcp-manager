@@ -4,6 +4,7 @@ let toolsList = [];
 let defaultServers = {}; // Servers from config.example.json
 let customServers = {};  // User-added servers
 let removedServers = {}; // Removed custom servers
+let appSettings = { cursorIntegration: { enabled: true } }; // App settings
 
 // HTML escaping utilities to prevent XSS
 function escapeHtml(str) {
@@ -21,7 +22,8 @@ const API = {
     CURSOR_CONFIG: '/api/cursor-config',
     CLAUDE_CONFIG: '/api/claude-config',
     TOOLS: '/api/tools',
-    SAVE_CONFIGS: '/api/save-configs'
+    SAVE_CONFIGS: '/api/save-configs',
+    SETTINGS: '/api/settings'
 };
 
 function showMessage(message, isError = true) {
@@ -68,6 +70,9 @@ async function fetchWithTimeout(url, options = {}) {
 async function loadConfigs() {
     console.log('Loading configurations...');
     try {
+        // Load settings first
+        await loadSettings();
+
         // Load default servers from config.json
         console.log('Fetching default config...');
         const defaultConfig = await fetchWithTimeout('/config.json');
@@ -128,6 +133,98 @@ async function loadConfigs() {
     } catch (error) {
         console.error('Error loading configs:', error);
         showMessage('Failed to load server configurations. Please refresh the page.');
+    }
+}
+
+async function loadSettings() {
+    console.log('Loading settings...');
+    try {
+        const settings = await fetchWithTimeout(API.SETTINGS);
+        appSettings = settings;
+        renderSettingsUI();
+        return settings;
+    } catch (error) {
+        console.error('Error loading settings:', error);
+        appSettings = { cursorIntegration: { enabled: true } };
+        renderSettingsUI();
+        return appSettings;
+    }
+}
+
+async function saveSetting(settingPath, value) {
+    console.log('Saving setting:', settingPath, value);
+    try {
+        // Update local state
+        const keys = settingPath.split('.');
+        let obj = appSettings;
+        for (let i = 0; i < keys.length - 1; i++) {
+            if (!obj[keys[i]]) obj[keys[i]] = {};
+            obj = obj[keys[i]];
+        }
+        obj[keys[keys.length - 1]] = value;
+
+        // Save to backend
+        await fetchWithTimeout(API.SETTINGS, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(appSettings)
+        });
+
+        return true;
+    } catch (error) {
+        console.error('Error saving setting:', error);
+        showMessage('Failed to save setting: ' + error.message);
+        return false;
+    }
+}
+
+function renderSettingsUI() {
+    const checkbox = document.getElementById('cursorIntegrationToggle');
+    if (checkbox) {
+        checkbox.checked = appSettings.cursorIntegration?.enabled ?? true;
+    }
+}
+
+async function toggleCursorIntegration(enabled) {
+    console.log('Toggling Cursor integration:', enabled);
+
+    if (!enabled) {
+        const confirmed = confirm(
+            'Disabling Cursor integration will:\n\n' +
+            '• Stop reading from Cursor\'s MCP configuration\n' +
+            '• Stop writing to Cursor\'s MCP configuration\n' +
+            '• Use Claude Desktop config as the source of truth\n\n' +
+            'Are you sure you want to continue?'
+        );
+
+        if (!confirmed) {
+            renderSettingsUI(); // Revert checkbox
+            return;
+        }
+    }
+
+    const success = await saveSetting('cursorIntegration.enabled', enabled);
+
+    if (success) {
+        showMessage(
+            enabled
+                ? 'Cursor integration enabled. Reload the page to see changes.'
+                : 'Cursor integration disabled. Reload the page to see changes.',
+            false
+        );
+    }
+}
+
+function toggleSettingsSection() {
+    const content = document.getElementById('settingsContent');
+    const icon = document.getElementById('settingsToggleIcon');
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.textContent = '▲';
+    } else {
+        content.style.display = 'none';
+        icon.textContent = '▼';
     }
 }
 
@@ -526,3 +623,6 @@ window.saveServer = saveServer;
 window.removeServer = removeServer;
 window.restoreServer = restoreServer;
 window.toggleRemovedSection = toggleRemovedSection;
+window.loadSettings = loadSettings;
+window.toggleCursorIntegration = toggleCursorIntegration;
+window.toggleSettingsSection = toggleSettingsSection;

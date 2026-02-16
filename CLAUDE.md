@@ -23,7 +23,9 @@ This is an ES module (`"type": "module"`) Node.js app with a vanilla JS frontend
   - `GET /api/cursor-config` — Returns merged config (local `config.json` defaults + Cursor's saved config)
   - `GET /api/claude-config` — Returns Claude Desktop's config as-is
   - `GET /api/tools` — Returns tools from enabled servers (currently only hardcoded `mcp-manager` tool)
-  - `POST /api/save-configs` — Writes filtered config (disabled servers removed) to Claude Desktop's config file. Note: Cursor config write is currently commented out.
+  - `POST /api/save-configs` — Writes full config to Cursor settings (if enabled) and filtered config (disabled servers + internal metadata removed) to Claude Desktop's config file.
+  - `GET /api/settings` — Returns app settings from `settings.json`
+  - `POST /api/settings` — Saves app settings to `settings.json`
 
 ### Frontend (Vanilla JS)
 
@@ -38,6 +40,7 @@ A separate MCP server (using `@modelcontextprotocol/sdk`) that exposes a `launch
 ## Config Files
 
 - **config.json** (gitignored) — Local default server definitions, created by copying `config.example.json`
+- **settings.json** (gitignored) — App settings (e.g., Cursor integration toggle). Created automatically on first save; defaults to `{ cursorIntegration: { enabled: true } }` when absent.
 - Claude Desktop config path: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 - Cursor config path: `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` (macOS)
 - Windows and Linux paths are also handled in `routes.js:getConfigPaths()`
@@ -45,4 +48,7 @@ A separate MCP server (using `@modelcontextprotocol/sdk`) that exposes a `launch
 ## Key Patterns
 
 - Server enable/disable uses a `disabled` boolean property on each server object. When saving to Claude Desktop, disabled servers are stripped entirely from the output config.
-- Config merging: default servers from `config.json` are merged with saved Cursor config, with saved values taking precedence.
+- Internal metadata properties (`disabled`, `custom`, `_removedFromDefaults`) are stripped when writing to Claude Desktop's config via `filterDisabledServers()`.
+- Config merging (3-way): default servers from `config.json` are merged with Cursor saved config (if enabled) and Claude Desktop config, with saved values taking precedence. Servers can be marked `custom: true` if not present in defaults.
+- Removed default servers are tracked via `_removedDefaults` array in the Cursor config file so they don't reappear on reload.
+- **Cursor integration toggle**: When disabled via settings, the backend skips reading/writing Cursor's config file entirely and uses only Claude Desktop config + defaults.

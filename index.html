@@ -13,7 +13,31 @@
         <!-- Messages -->
         <div id="errorMessage" class="message error" style="display: none;"></div>
         <div id="successMessage" class="message success" style="display: none;"></div>
-        
+
+        <!-- Settings Section -->
+        <div id="settingsSection" class="settings-section">
+            <div class="settings-header" onclick="toggleSettingsSection()">
+                <span>Settings</span>
+                <span id="settingsToggleIcon">▼</span>
+            </div>
+            <div id="settingsContent" class="settings-content" style="display: none;">
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Enable Cursor Integration</div>
+                        <div class="setting-description">
+                            When enabled, MCP Manager will read from and write to Cursor's MCP configuration file.
+                            Disable this if you only want to manage Claude Desktop servers.
+                        </div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="cursorIntegrationToggle" checked
+                               onchange="toggleCursorIntegration(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
         <!-- Navigation -->
         <div class="tabs">
             <button class="tab active" onclick="showView('servers', this)">Servers</button>

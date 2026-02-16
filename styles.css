@@ -590,3 +590,66 @@ input:checked + .slider:before {
         grid-template-columns: 1fr;
     }
 }
+
+/* Settings Section */
+.settings-section {
+    background-color: var(--card-bg);
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-color);
+    transition: background-color 0.2s;
+}
+
+.settings-header:hover {
+    background-color: #f8f8f8;
+}
+
+.settings-content {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 2rem;
+    padding: 1rem 0;
+}
+
+.setting-info {
+    flex: 1;
+}
+
+.setting-label {
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    color: var(--text-color);
+}
+
+.setting-description {
+    font-size: 0.875rem;
+    color: #666;
+    line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+    .setting-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .setting-row .toggle-switch {
+        align-self: flex-end;
+    }
+}

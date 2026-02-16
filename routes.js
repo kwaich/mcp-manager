@@ -32,6 +32,25 @@ function getConfigPaths() {
 
 const { CURSOR_CONFIG_PATH, CLAUDE_CONFIG_PATH } = getConfigPaths();
 
+// Helper functions for settings file
+async function readSettings() {
+    try {
+        const settingsPath = path.join(__dirname, 'settings.json');
+        const data = await fs.readFile(settingsPath, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return { cursorIntegration: { enabled: true } }; // Defaults
+        }
+        throw error;
+    }
+}
+
+async function writeSettings(settings) {
+    const settingsPath = path.join(__dirname, 'settings.json');
+    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
+}
+
 // Helper function to read config files
 async function readConfigFile(filePath) {
     try {
@@ -77,7 +96,16 @@ router.get('/cursor-config', async (req, res) => {
     // 2. Claude Desktop config — pulled in if server not already present
     // 3. Default config (config.json) — base defaults, excluded if in removedDefaults
     try {
-        const savedConfig = await readConfigFile(CURSOR_CONFIG_PATH);
+        const settings = await readSettings();
+        const cursorEnabled = settings.cursorIntegration?.enabled ?? true;
+
+        let savedConfig = { mcpServers: {} };
+
+        // Only read Cursor config if integration is enabled
+        if (cursorEnabled) {
+            savedConfig = await readConfigFile(CURSOR_CONFIG_PATH);
+        }
+
         const claudeConfig = await readConfigFile(CLAUDE_CONFIG_PATH);
         const defaultConfig = await readConfigFile(path.join(__dirname, 'config.json'));
         
@@ -94,17 +122,19 @@ router.get('/cursor-config', async (req, res) => {
             }
         });
         
-        // Override with saved Cursor configurations and add custom servers
-        Object.entries(savedConfig.mcpServers || {}).forEach(([name, config]) => {
-            mergedServers[name] = {
-                ...mergedServers[name],
-                ...config
-            };
-            // Mark custom servers (servers not in defaults)
-            if (!defaultConfig.mcpServers?.[name]) {
-                mergedServers[name].custom = true;
-            }
-        });
+        // Override with saved Cursor configurations and add custom servers (if enabled)
+        if (cursorEnabled) {
+            Object.entries(savedConfig.mcpServers || {}).forEach(([name, config]) => {
+                mergedServers[name] = {
+                    ...mergedServers[name],
+                    ...config
+                };
+                // Mark custom servers (servers not in defaults)
+                if (!defaultConfig.mcpServers?.[name]) {
+                    mergedServers[name].custom = true;
+                }
+            });
+        }
         
         // Also add servers from Claude Desktop config if not already present
         Object.entries(claudeConfig.mcpServers || {}).forEach(([name, config]) => {
@@ -144,17 +174,24 @@ router.get('/claude-config', async (req, res) => {
 router.get('/tools', async (req, res) => {
     console.log('Handling /api/tools request');
     try {
-        const cursorConfig = await readConfigFile(CURSOR_CONFIG_PATH);
+        const settings = await readSettings();
+        const cursorEnabled = settings.cursorIntegration?.enabled ?? true;
+
         const defaultConfig = await readConfigFile(path.join(__dirname, 'config.json'));
-        
-        // Simple two-way merge: defaults + Cursor overrides
+
+        // Simple two-way merge: defaults + Cursor overrides (if enabled)
         const mergedServers = {};
         Object.entries(defaultConfig.mcpServers || {}).forEach(([name, config]) => {
             mergedServers[name] = { ...config };
         });
-        Object.entries(cursorConfig.mcpServers || {}).forEach(([name, config]) => {
-            mergedServers[name] = { ...mergedServers[name], ...config };
-        });
+
+        // Only merge Cursor config if integration is enabled
+        if (cursorEnabled) {
+            const cursorConfig = await readConfigFile(CURSOR_CONFIG_PATH);
+            Object.entries(cursorConfig.mcpServers || {}).forEach(([name, config]) => {
+                mergedServers[name] = { ...mergedServers[name], ...config };
+            });
+        }
 
         // Also include servers from Claude Desktop config if not already present
         const claudeConfig = await readConfigFile(CLAUDE_CONFIG_PATH);
@@ -208,6 +245,9 @@ router.post('/save-configs', async (req, res) => {
             throw new Error('No server configuration provided');
         }
 
+        const settings = await readSettings();
+        const cursorEnabled = settings.cursorIntegration?.enabled ?? true;
+
         // Load default config to identify removed defaults
         const defaultConfig = await readConfigFile(path.join(__dirname, 'config.json'));
         const defaultServerNames = Object.keys(defaultConfig.mcpServers || {});
@@ -232,16 +272,20 @@ router.post('/save-configs', async (req, res) => {
             fullConfig._removedDefaults = removedDefaults;
         }
 
-        // Save full config to Cursor settings (for UI state persistence)
-        try {
-            await fs.writeFile(CURSOR_CONFIG_PATH, JSON.stringify(fullConfig, null, 2));
-            console.log('Saved config to Cursor settings');
-        } catch (error) {
-            if (error.code === 'ENOENT') {
-                console.log('Cursor config path does not exist, skipping:', CURSOR_CONFIG_PATH);
-            } else {
-                console.warn('Failed to save Cursor config:', error.message);
+        // Save full config to Cursor settings (for UI state persistence) if integration is enabled
+        if (cursorEnabled) {
+            try {
+                await fs.writeFile(CURSOR_CONFIG_PATH, JSON.stringify(fullConfig, null, 2));
+                console.log('Saved config to Cursor settings');
+            } catch (error) {
+                if (error.code === 'ENOENT') {
+                    console.log('Cursor config path does not exist, skipping:', CURSOR_CONFIG_PATH);
+                } else {
+                    console.warn('Failed to save Cursor config:', error.message);
+                }
             }
+        } else {
+            console.log('Cursor integration disabled, skipping Cursor config write');
         }
 
         // Save filtered config to Claude settings (removing disabled servers and internal metadata)
@@ -267,6 +311,31 @@ router.post('/save-configs', async (req, res) => {
     } catch (error) {
         console.error('Error in /api/save-configs:', error);
         res.status(500).json({ error: `Failed to save configurations: ${error.message}` });
+    }
+});
+
+// Get settings
+router.get('/settings', async (req, res) => {
+    console.log('Handling /api/settings request');
+    try {
+        const settings = await readSettings();
+        res.json(settings);
+    } catch (error) {
+        console.error('Error in /api/settings:', error);
+        res.status(500).json({ error: `Failed to read settings: ${error.message}` });
+    }
+});
+
+// Save settings
+router.post('/settings', async (req, res) => {
+    console.log('Handling /api/settings POST request');
+    try {
+        await writeSettings(req.body);
+        console.log('Settings saved successfully');
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error in /api/settings POST:', error);
+        res.status(500).json({ error: `Failed to save settings: ${error.message}` });
     }
 });
 
