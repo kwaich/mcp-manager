@@ -13,7 +13,7 @@
         "title": "MCP Server Manager",
         "width": 1000,
         "height": 700,
-        "titleBarStyle": "Overlay"
+        "titleBarStyle": "Transparent"
       }
     ],
     "security": {
