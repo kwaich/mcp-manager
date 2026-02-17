@@ -7,105 +7,171 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <h1>MCP Server Manager</h1>
-        
-        <!-- Messages -->
-        <div id="errorMessage" class="message error" style="display: none;"></div>
-        <div id="successMessage" class="message success" style="display: none;"></div>
+    <!-- macOS title bar drag region -->
+    <div class="drag-region" data-tauri-drag-region></div>
 
-        <!-- Settings Section -->
-        <div id="settingsSection" class="settings-section">
-            <div class="settings-header" onclick="toggleSettingsSection()">
-                <span>Settings</span>
-                <span id="settingsToggleIcon">▼</span>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-view="servers" onclick="showView('servers')">
+                    <svg class="nav-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="2" y="3" width="16" height="5" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+                        <rect x="2" y="12" width="16" height="5" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+                        <circle cx="5.5" cy="5.5" r="1" fill="currentColor"/>
+                        <circle cx="5.5" cy="14.5" r="1" fill="currentColor"/>
+                    </svg>
+                    Servers
+                </button>
+                <button class="nav-item" data-view="tools" onclick="showView('tools')">
+                    <svg class="nav-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M14.5 2a3.5 3.5 0 0 1 .956 6.868l-5.619 5.619A3.5 3.5 0 1 1 4.513 9.163l5.619-5.619A3.5 3.5 0 0 1 14.5 2Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Tools
+                </button>
+            </nav>
+            <div class="sidebar-bottom">
+                <button class="nav-item" data-view="settings" onclick="showView('settings')">
+                    <svg class="nav-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    Settings
+                </button>
             </div>
-            <div id="settingsContent" class="settings-content" style="display: none;">
-                <div class="setting-row">
-                    <div class="setting-info">
-                        <div class="setting-label">Enable Cursor Integration</div>
-                        <div class="setting-description">
-                            When enabled, MCP Manager will read from and write to Cursor's MCP configuration file.
-                            Disable this if you only want to manage Claude Desktop servers.
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Toolbar -->
+            <div class="toolbar" id="toolbar">
+                <div class="toolbar-left">
+                    <div class="search-wrapper">
+                        <svg class="search-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="6.5" cy="6.5" r="4" stroke="currentColor" stroke-width="1.4"/>
+                            <path d="M9.5 9.5L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                        </svg>
+                        <input type="text" class="search-input" id="searchInput"
+                               placeholder="Search servers…" oninput="filterServers(this.value)">
+                    </div>
+                </div>
+                <div class="toolbar-right">
+                    <button class="btn btn-primary" id="addServerBtn" onclick="showAddServerModal()">
+                        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="14" height="14">
+                            <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                        Add Server
+                    </button>
+                </div>
+            </div>
+
+            <!-- Scrollable content -->
+            <div class="content-scroll">
+                <!-- Servers View -->
+                <div id="serversView" class="view">
+                    <div id="serverGrid" class="server-grid"></div>
+
+                    <div id="removedServersSection" style="display: none;">
+                        <div class="section-divider">
+                            <span>Removed Servers</span>
+                        </div>
+                        <div id="removedServersList" class="removed-list"></div>
+                    </div>
+                </div>
+
+                <!-- Tools View -->
+                <div id="toolsView" class="view" style="display: none;"></div>
+
+                <!-- Settings View -->
+                <div id="settingsView" class="view" style="display: none;">
+                    <div class="settings-group">
+                        <div class="settings-group-title">Integrations</div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Cursor Integration</div>
+                                <div class="setting-description">
+                                    Read from and write to Cursor's MCP configuration file.
+                                    Disable to manage Claude Desktop servers only.
+                                </div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="cursorIntegrationToggle" checked
+                                       onchange="toggleCursorIntegration(this.checked)">
+                                <span class="slider"></span>
+                            </label>
                         </div>
                     </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="cursorIntegrationToggle" checked
-                               onchange="toggleCursorIntegration(this.checked)">
-                        <span class="slider"></span>
-                    </label>
                 </div>
             </div>
-        </div>
 
-        <!-- Navigation -->
-        <div class="tabs">
-            <button class="tab active" onclick="showView('servers', this)">Servers</button>
-            <button class="tab" onclick="showView('tools', this)">Tools</button>
-        </div>
-
-        <!-- Add Server Button -->
-        <div class="add-server-section">
-            <button class="add-server-button" onclick="showAddServerModal()">+ Add Server</button>
-        </div>
-
-        <!-- Servers View -->
-        <div id="serversView" class="grid"></div>
-
-        <!-- Removed Servers Section -->
-        <div id="removedServersSection" class="removed-servers-section" style="display: none;">
-            <div class="removed-header" onclick="toggleRemovedSection()">
-                <span>Removed Servers</span>
-                <span id="removedToggleIcon">▼</span>
+            <!-- Footer -->
+            <div class="footer">
+                <button class="btn btn-save" onclick="saveChanges()">Save Changes</button>
             </div>
-            <div id="removedServersContent" class="removed-content" style="display: none;">
-                <div id="removedServersList" class="removed-list"></div>
+        </main>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
+
+    <!-- Confirm Modal -->
+    <div id="confirmModal" class="modal" style="display: none;">
+        <div class="modal-overlay" onclick=""></div>
+        <div class="modal-content confirm-modal-content">
+            <p id="confirmMessage" class="confirm-message"></p>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="confirmCancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmOk">Confirm</button>
             </div>
         </div>
+    </div>
 
-        <!-- Tools View -->
-        <div id="toolsView" style="display: none;"></div>
+    <!-- Add/Edit Server Modal -->
+    <div id="serverModal" class="modal" style="display: none;">
+        <div class="modal-overlay" onclick="hideAddServerModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Add Server</h2>
+                <button class="modal-close" onclick="hideAddServerModal()">
+                    <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="14" height="14">
+                        <path d="M2 2l12 12M14 2L2 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </button>
+            </div>
+            <form id="serverForm" onsubmit="saveServer(event)">
+                <input type="hidden" id="editingServerName" value="">
 
-        <!-- Save Button -->
-        <button class="save-button" onclick="saveChanges()">Save Changes</button>
-
-        <!-- Add/Edit Server Modal -->
-        <div id="serverModal" class="modal" style="display: none;">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2 id="modalTitle">Add Server</h2>
-                    <button class="modal-close" onclick="hideAddServerModal()">&times;</button>
+                <div class="form-group">
+                    <label for="serverName">Server Name <span class="required">*</span></label>
+                    <input type="text" id="serverName" required placeholder="e.g., my-custom-server">
                 </div>
-                <form id="serverForm" onsubmit="saveServer(event)">
-                    <input type="hidden" id="editingServerName" value="">
-                    
-                    <div class="form-group">
-                        <label for="serverName">Server Name *</label>
-                        <input type="text" id="serverName" required placeholder="e.g., my-custom-server">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="serverCommand">Command *</label>
-                        <input type="text" id="serverCommand" required placeholder="e.g., node, python, npx">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="serverArgs">Arguments (one per line)</label>
-                        <textarea id="serverArgs" rows="4" placeholder="/path/to/server.js&#10;--flag&#10;--option value"></textarea>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Environment Variables</label>
-                        <div id="envVarsContainer"></div>
-                        <button type="button" class="add-env-button" onclick="addEnvVarField()">+ Add Environment Variable</button>
-                    </div>
-                    
-                    <div class="modal-actions">
-                        <button type="button" class="cancel-button" onclick="hideAddServerModal()">Cancel</button>
-                        <button type="submit" class="save-server-button">Save Server</button>
-                    </div>
-                </form>
-            </div>
+
+                <div class="form-group">
+                    <label for="serverCommand">Command <span class="required">*</span></label>
+                    <input type="text" id="serverCommand" required placeholder="e.g., node, python, npx">
+                </div>
+
+                <div class="form-group">
+                    <label for="serverArgs">Arguments <span class="form-hint">(one per line)</span></label>
+                    <textarea id="serverArgs" rows="4" placeholder="/path/to/server.js&#10;--flag&#10;--option value"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Environment Variables</label>
+                    <div id="envVarsContainer"></div>
+                    <button type="button" class="btn-add-env" onclick="addEnvVarField()">
+                        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="12" height="12">
+                            <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                        Add Variable
+                    </button>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="hideAddServerModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Server</button>
+                </div>
+            </form>
         </div>
     </div>
 

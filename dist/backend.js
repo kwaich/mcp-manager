@@ -6,6 +6,7 @@ const Backend = (() => {
     // Cached paths — computed once during init()
     let _configPaths = null;
     let _settingsPath = null;
+    let _localConfigPath = null;
 
     // ─── Guards ───────────────────────────────────────────────────────────────
 
@@ -42,11 +43,22 @@ const Backend = (() => {
     }
 
     async function readTextFile(path) {
-        return fsInvoke('read_text_file', { path });
+        // tauri-plugin-fs v2.4+ returns ArrayBuffer | number[] that must be decoded.
+        const arr = await fsInvoke('read_text_file', { path });
+        const bytes = arr instanceof ArrayBuffer ? arr : Uint8Array.from(arr);
+        return new TextDecoder().decode(bytes);
     }
 
     async function writeTextFile(path, contents) {
-        await fsInvoke('write_text_file', { path, contents });
+        // tauri-plugin-fs v2.4+ changed write_text_file to use a binary payload
+        // with the path passed as a URL-encoded header (matching the official JS API).
+        const encoder = new TextEncoder();
+        await window.__TAURI__.core.invoke('plugin:fs|write_text_file', encoder.encode(contents), {
+            headers: {
+                path: encodeURIComponent(path),
+                options: JSON.stringify(undefined)
+            }
+        });
     }
 
     async function mkdirRecursive(path) {
@@ -132,6 +144,14 @@ const Backend = (() => {
         return _settingsPath;
     }
 
+    async function getLocalConfigPath() {
+        if (_localConfigPath) return _localConfigPath;
+        const appData = await appDataDir();
+        await mkdirRecursive(appData);
+        _localConfigPath = joinPath(appData, 'config.json');
+        return _localConfigPath;
+    }
+
     // ─── Config file helpers ──────────────────────────────────────────────────
 
     async function readConfigFile(filePath) {
@@ -161,6 +181,29 @@ const Backend = (() => {
         await writeTextFile(sp, JSON.stringify(settings, null, 2));
     }
 
+    // ─── Local config (app settings dir) ───────────────────────────────────────
+
+    async function readLocalConfig() {
+        try {
+            const cp = await getLocalConfigPath();
+            const data = await readTextFile(cp);
+            return JSON.parse(data);
+        } catch (_) {
+            return {
+                version: 1,
+                disabledServers: [],
+                serverDefinitions: {},
+                deletedServers: {},
+                removedDefaults: []
+            };
+        }
+    }
+
+    async function writeLocalConfig(config) {
+        const cp = await getLocalConfigPath();
+        await writeTextFile(cp, JSON.stringify(config, null, 2));
+    }
+
     // ─── Default config (bundled resource) ───────────────────────────────────
 
     async function readDefaultConfig() {
@@ -172,6 +215,39 @@ const Backend = (() => {
         } catch (error) {
             console.error('Failed to read bundled config.example.json:', error);
             return { mcpServers: {} };
+        }
+    }
+
+    // ─── Migration ─────────────────────────────────────────────────────────────
+
+    async function migrateRemovedDefaults() {
+        const { CURSOR_CONFIG_PATH } = await getConfigPaths();
+        const settings = await readSettings();
+        const cursorEnabled = settings.cursorIntegration?.enabled ?? true;
+
+        if (!cursorEnabled) return;
+
+        try {
+            const cursorConfig = await readConfigFile(CURSOR_CONFIG_PATH);
+            if (cursorConfig._removedDefaults && cursorConfig._removedDefaults.length > 0) {
+                console.log('Migrating _removedDefaults from Cursor config to local config:', cursorConfig._removedDefaults);
+
+                const localConfig = await readLocalConfig();
+                localConfig.removedDefaults = [...new Set([
+                    ...localConfig.removedDefaults,
+                    ...cursorConfig._removedDefaults
+                ])];
+
+                await writeLocalConfig(localConfig);
+
+                // Remove from Cursor config
+                delete cursorConfig._removedDefaults;
+                await writeTextFile(CURSOR_CONFIG_PATH, JSON.stringify(cursorConfig, null, 2));
+
+                console.log('Migration complete');
+            }
+        } catch (error) {
+            console.warn('Failed to migrate removed defaults:', error);
         }
     }
 
@@ -204,6 +280,13 @@ const Backend = (() => {
         const settings = await readSettings();
         const cursorEnabled = settings.cursorIntegration?.enabled ?? true;
 
+        // Read local config (stores disabled/deleted servers and their definitions)
+        const localConfig = await readLocalConfig();
+        const removedDefaults = localConfig.removedDefaults || [];
+        const disabledServers = localConfig.disabledServers || [];
+        const serverDefinitions = localConfig.serverDefinitions || {};
+        const deletedServers = localConfig.deletedServers || {};
+
         let savedConfig = { mcpServers: {} };
         if (cursorEnabled) {
             savedConfig = await readConfigFile(CURSOR_CONFIG_PATH);
@@ -212,7 +295,6 @@ const Backend = (() => {
         const claudeConfig = await readConfigFile(CLAUDE_CONFIG_PATH);
         const defaultConfig = await readDefaultConfig();
 
-        const removedDefaults = savedConfig._removedDefaults || [];
         const mergedServers = {};
 
         // 1. Add default servers (excluding removed ones)
@@ -242,10 +324,27 @@ const Backend = (() => {
             }
         });
 
-        // 4. Sync disabled state with Claude Desktop — servers absent there are disabled
-        const claudeServerNames = Object.keys(claudeConfig.mcpServers || {});
-        Object.entries(mergedServers).forEach(([name]) => {
-            if (!claudeServerNames.includes(name)) {
+        // 4. Add disabled servers from local config (with their definitions)
+        disabledServers.forEach(name => {
+            if (!mergedServers[name] && serverDefinitions[name]) {
+                mergedServers[name] = { ...serverDefinitions[name] };
+                if (!defaultConfig.mcpServers?.[name]) {
+                    mergedServers[name].custom = true;
+                }
+                mergedServers[name].disabled = true;
+            }
+        });
+
+        // 5. Add deleted servers from local config (for restore capability)
+        Object.entries(deletedServers).forEach(([name, config]) => {
+            if (!mergedServers[name]) {
+                mergedServers[name] = { ...config, custom: true, deleted: true };
+            }
+        });
+
+        // 6. Mark disabled servers based on local config
+        disabledServers.forEach(name => {
+            if (mergedServers[name]) {
                 mergedServers[name].disabled = true;
             }
         });
@@ -309,6 +408,7 @@ const Backend = (() => {
 
         const defaultConfig = await readDefaultConfig();
         const defaultServerNames = Object.keys(defaultConfig.mcpServers || {});
+        const localConfig = await readLocalConfig();
 
         // Track which default servers have been removed
         const removedDefaults = [];
@@ -320,12 +420,67 @@ const Backend = (() => {
             });
         }
 
-        const fullConfig = { mcpServers };
-        if (removedDefaults.length > 0) {
-            fullConfig._removedDefaults = removedDefaults;
+        // Build lists of disabled and deleted servers
+        const disabledServers = [];
+        const serverDefinitions = {};
+        const deletedServers = {};
+
+        Object.entries(mcpServers).forEach(([name, server]) => {
+            const isDefault = defaultServerNames.includes(name);
+            const isRemovedDefault = removedDefaults.includes(name);
+            const isDeleted = server.deleted === true;
+            const isDisabled = server.disabled === true;
+
+            if (isDeleted) {
+                // Custom servers marked as deleted go to deletedServers
+                if (!isDefault) {
+                    const { deleted: _, disabled: __, custom: ___, ...serverConfig } = server;
+                    deletedServers[name] = serverConfig;
+                }
+            } else if (isDisabled) {
+                // Disabled servers go to disabledServers list with their definitions
+                disabledServers.push(name);
+                const { disabled: _, custom: __, deleted: ___, ...serverConfig } = server;
+                serverDefinitions[name] = serverConfig;
+            }
+        });
+
+        // Also handle removedServers that are custom (fully deleted)
+        if (removedServers) {
+            Object.entries(removedServers).forEach(([name, server]) => {
+                const isDefault = defaultServerNames.includes(name);
+                if (!isDefault && !deletedServers[name]) {
+                    // This is a custom server being deleted
+                    const { disabled: _, custom: __, deleted: ___, ...serverConfig } = server;
+                    deletedServers[name] = serverConfig;
+                }
+            });
         }
 
-        // Save full config to Cursor (UI state persistence) if integration enabled
+        // Update local config
+        localConfig.disabledServers = disabledServers;
+        localConfig.serverDefinitions = serverDefinitions;
+        localConfig.deletedServers = deletedServers;
+        localConfig.removedDefaults = [...new Set([
+            ...(localConfig.removedDefaults || []),
+            ...removedDefaults
+        ])];
+
+        await writeLocalConfig(localConfig);
+        console.log('Saved config to local settings:', { disabledServers: disabledServers.length, deletedServers: Object.keys(deletedServers).length, removedDefaults: localConfig.removedDefaults.length });
+
+        // Build enabled servers for Cursor config (without internal fields)
+        const enabledServers = {};
+        Object.entries(mcpServers).forEach(([name, server]) => {
+            if (!server.disabled && !server.deleted && !removedDefaults.includes(name)) {
+                const { disabled: _, custom: __, deleted: ___, ...serverConfig } = server;
+                enabledServers[name] = serverConfig;
+            }
+        });
+
+        const fullConfig = { mcpServers: enabledServers };
+
+        // Save to Cursor (UI state persistence) if integration enabled
         if (cursorEnabled) {
             try {
                 await writeTextFile(CURSOR_CONFIG_PATH, JSON.stringify(fullConfig, null, 2));
@@ -364,6 +519,9 @@ const Backend = (() => {
         requireTauri();
         await getConfigPaths();
         console.log('Backend initialised. Config paths:', _configPaths);
+
+        // Migrate _removedDefaults from old Cursor config to new local config
+        await migrateRemovedDefaults();
     }
 
     return {

@@ -1,12 +1,13 @@
 let mcpServers = {};
 let originalConfig = {};
 let toolsList = [];
-let defaultServers = {}; // Servers from config.example.json
-let customServers = {};  // User-added servers
-let removedServers = {}; // Removed custom servers
-let appSettings = { cursorIntegration: { enabled: true } }; // App settings
+let defaultServers = {};
+let customServers = {};
+let removedServers = {};
+let appSettings = { cursorIntegration: { enabled: true } };
+let currentView = 'servers';
 
-// HTML escaping utilities to prevent XSS
+// ─── HTML Escaping (XSS prevention) ───────────────────────────────────────────
 function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
@@ -17,94 +18,103 @@ function escapeAttr(str) {
     return String(str).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
 }
 
+// ─── Toast System ──────────────────────────────────────────────────────────────
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `<div class="toast-dot"></div><span>${escapeHtml(message)}</span>`;
+    container.appendChild(toast);
 
-function showMessage(message, isError = true) {
-    const messageDiv = document.getElementById(isError ? 'errorMessage' : 'successMessage');
-    const otherDiv = document.getElementById(isError ? 'successMessage' : 'errorMessage');
-    
-    messageDiv.textContent = message;
-    messageDiv.style.display = 'block';
-    otherDiv.style.display = 'none';
-    
-    setTimeout(() => {
-        messageDiv.style.display = 'none';
-    }, 10000); // Show for 10 seconds
+    const dismiss = () => {
+        toast.classList.add('exiting');
+        toast.addEventListener('animationend', () => toast.remove(), { once: true });
+    };
+
+    const timer = setTimeout(dismiss, 4000);
+    toast.addEventListener('click', () => { clearTimeout(timer); dismiss(); });
 }
 
+// Keep backward-compat alias
+function showMessage(message, isError = true) {
+    showToast(message, isError ? 'error' : 'success');
+}
 
+// ─── Loading Skeleton ──────────────────────────────────────────────────────────
+function showLoadingSkeletons() {
+    const grid = document.getElementById('serverGrid');
+    grid.innerHTML = '';
+    const skeleton = document.createElement('div');
+    skeleton.className = 'skeleton-grid';
+    skeleton.id = 'skeletonGrid';
+    for (let i = 0; i < 4; i++) {
+        const card = document.createElement('div');
+        card.className = 'skeleton-card';
+        skeleton.appendChild(card);
+    }
+    grid.appendChild(skeleton);
+}
+
+function removeLoadingSkeletons() {
+    const s = document.getElementById('skeletonGrid');
+    if (s) s.remove();
+}
+
+// ─── Config Loading ────────────────────────────────────────────────────────────
 async function loadConfigs() {
     console.log('Loading configurations...');
+    showLoadingSkeletons();
+
     try {
         await Backend.init();
-
-        // Load settings first
         await loadSettings();
 
-        // Load default servers from bundled config.example.json
         console.log('Reading default config...');
         const defaultConfig = await Backend.readDefaultConfig();
         defaultServers = defaultConfig.mcpServers || {};
-        console.log('Default servers:', Object.keys(defaultServers));
 
-        // Load merged config (defaults + Cursor + Claude Desktop)
         console.log('Getting merged config...');
         const cursorConfig = await Backend.getMergedConfig();
-        console.log('Received merged config:', cursorConfig);
-        
-        if (!cursorConfig.mcpServers) {
-            throw new Error('Invalid config format: missing mcpServers');
-        }
-        
+        if (!cursorConfig.mcpServers) throw new Error('Invalid config format: missing mcpServers');
+
         mcpServers = cursorConfig.mcpServers;
-        
-        // Get removed defaults from server
         const removedDefaults = cursorConfig.removedDefaults || [];
-        
-        // Separate default and custom servers
+
         customServers = {};
         removedServers = {};
-        
-        // Populate removedServers with removed default servers
+
         removedDefaults.forEach(name => {
             if (defaultServers[name]) {
                 removedServers[name] = { ...defaultServers[name], _removedFromDefaults: true };
             }
         });
-        
+
         Object.entries(mcpServers).forEach(([name, config]) => {
-            if (config.custom) {
-                customServers[name] = config;
-            }
+            if (config.custom) customServers[name] = config;
         });
-        
+
         originalConfig = JSON.parse(JSON.stringify(mcpServers));
-        
-        console.log('Loaded servers:', Object.keys(mcpServers));
-        console.log('Custom servers:', Object.keys(customServers));
-        console.log('Removed defaults:', removedDefaults);
-        
-        // Render initial view
+
+        removeLoadingSkeletons();
         renderServers();
         renderRemovedServers();
 
-        // Load tools in background
         try {
-            console.log('Getting tools...');
             toolsList = await Backend.getTools();
-            console.log('Loaded tools:', toolsList);
             renderTools();
-        } catch (error) {
-            console.error('Error loading tools:', error);
-            showMessage('Failed to load tools. Server list may be incomplete.');
+        } catch (err) {
+            console.error('Error loading tools:', err);
+            showToast('Failed to load tools — server list may be incomplete.', 'error');
         }
     } catch (error) {
         console.error('Error loading configs:', error);
-        showMessage('Failed to load server configurations. Please refresh the page.');
+        removeLoadingSkeletons();
+        showToast('Failed to load server configurations. Please restart the app.', 'error');
     }
 }
 
+// ─── Settings ─────────────────────────────────────────────────────────────────
 async function loadSettings() {
-    console.log('Loading settings...');
     try {
         const settings = await Backend.readSettings();
         appSettings = settings;
@@ -119,9 +129,7 @@ async function loadSettings() {
 }
 
 async function saveSetting(settingPath, value) {
-    console.log('Saving setting:', settingPath, value);
     try {
-        // Update local state
         const keys = settingPath.split('.');
         let obj = appSettings;
         for (let i = 0; i < keys.length - 1; i++) {
@@ -129,256 +137,319 @@ async function saveSetting(settingPath, value) {
             obj = obj[keys[i]];
         }
         obj[keys[keys.length - 1]] = value;
-
-        // Save to backend
         await Backend.writeSettings(appSettings);
-
         return true;
     } catch (error) {
         console.error('Error saving setting:', error);
-        showMessage('Failed to save setting: ' + error.message);
+        showToast('Failed to save setting: ' + (error?.message ?? String(error)), 'error');
         return false;
     }
 }
 
 function renderSettingsUI() {
     const checkbox = document.getElementById('cursorIntegrationToggle');
-    if (checkbox) {
-        checkbox.checked = appSettings.cursorIntegration?.enabled ?? true;
+    if (checkbox) checkbox.checked = appSettings.cursorIntegration?.enabled ?? true;
+}
+
+// ─── Cursor Integration Toggle ─────────────────────────────────────────────────
+async function applyCursorToggle(enabled) {
+    const success = await saveSetting('cursorIntegration.enabled', enabled);
+    if (success) {
+        await loadConfigs();
+        showToast(
+            enabled ? 'Cursor integration enabled.' : 'Cursor integration disabled.',
+            'success'
+        );
     }
 }
 
 async function toggleCursorIntegration(enabled) {
-    console.log('Toggling Cursor integration:', enabled);
-
     if (!enabled) {
-        const confirmed = confirm(
+        showConfirmModal(
             'Disabling Cursor integration will:\n\n' +
             '• Stop reading from Cursor\'s MCP configuration\n' +
             '• Stop writing to Cursor\'s MCP configuration\n' +
             '• Use Claude Desktop config as the source of truth\n\n' +
-            'Are you sure you want to continue?'
+            'Are you sure you want to continue?',
+            async () => { await applyCursorToggle(false); },
+            () => { renderSettingsUI(); }
         );
+        return;
+    }
+    await applyCursorToggle(true);
+}
 
-        if (!confirmed) {
-            renderSettingsUI(); // Revert checkbox
-            return;
+// ─── Confirm Modal ─────────────────────────────────────────────────────────────
+function showConfirmModal(message, onConfirm, onCancel) {
+    const modal = document.getElementById('confirmModal');
+    document.getElementById('confirmMessage').textContent = message;
+    modal.style.display = 'flex';
+
+    document.getElementById('confirmOk').onclick = () => {
+        modal.style.display = 'none';
+        onConfirm();
+    };
+    document.getElementById('confirmCancel').onclick = () => {
+        modal.style.display = 'none';
+        if (onCancel) onCancel();
+    };
+}
+
+// ─── View Navigation ───────────────────────────────────────────────────────────
+function showView(view) {
+    currentView = view;
+
+    // Update sidebar active state
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.view === view);
+    });
+
+    // Show/hide views
+    const views = { serversView: 'servers', toolsView: 'tools', settingsView: 'settings' };
+    Object.entries(views).forEach(([id, name]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.display = name === view ? 'block' : 'none';
+        if (name === view) {
+            // Re-trigger animation
+            el.classList.remove('view');
+            void el.offsetWidth; // reflow
+            el.classList.add('view');
         }
-    }
+    });
 
-    const success = await saveSetting('cursorIntegration.enabled', enabled);
+    // Show toolbar only on servers view
+    const toolbar = document.getElementById('toolbar');
+    if (toolbar) toolbar.style.display = view === 'servers' ? 'flex' : 'none';
 
-    if (success) {
-        await loadConfigs();
-        showMessage(
-            enabled
-                ? 'Cursor integration enabled.'
-                : 'Cursor integration disabled.',
-            false
-        );
-    }
+    if (view === 'tools') renderTools();
 }
 
-function toggleSettingsSection() {
-    const content = document.getElementById('settingsContent');
-    const icon = document.getElementById('settingsToggleIcon');
-
-    if (content.style.display === 'none') {
-        content.style.display = 'block';
-        icon.textContent = '▲';
-    } else {
-        content.style.display = 'none';
-        icon.textContent = '▼';
-    }
-}
-
-function showView(view, clickedTab) {
-    console.log('Switching view to:', view);
-    // Update tabs
-    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-    clickedTab.classList.add('active');
-
-    // Update views
-    document.getElementById('serversView').style.display = view === 'servers' ? 'grid' : 'none';
-    document.getElementById('toolsView').style.display = view === 'tools' ? 'block' : 'none';
-
-    // Refresh tools view when switching to it
-    if (view === 'tools') {
-        renderTools();
-    }
-}
-
+// ─── Render Servers ────────────────────────────────────────────────────────────
 function renderServers() {
-    console.log('Rendering servers view with servers:', Object.keys(mcpServers));
-    const grid = document.getElementById('serversView');
+    const grid = document.getElementById('serverGrid');
     grid.innerHTML = '';
 
-    // Sort servers alphabetically
     const sortedServers = Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b));
 
-    sortedServers.forEach(([name, config]) => {
-        console.log('Rendering server:', name, config);
-        const card = document.createElement('div');
-        card.className = 'server-card';
-        
-        const serverPath = Array.isArray(config.args) ? config.args[0] : '';
-        const envVars = config.env || {};
+    sortedServers.forEach(([name, config], index) => {
         const isCustom = config.custom === true;
+        const isDisabled = !!config.disabled;
         const safeName = escapeAttr(name);
         const displayName = escapeHtml(name);
+        const envVars = config.env || {};
+        const envCount = Object.keys(envVars).length;
+
+        // Build command display
+        const cmdParts = [config.command];
+        if (Array.isArray(config.args) && config.args.length) {
+            cmdParts.push(...config.args.slice(0, 2));
+            if (config.args.length > 2) cmdParts.push('…');
+        }
+        const cmdDisplay = escapeHtml(cmdParts.join(' '));
+
+        const card = document.createElement('div');
+        card.className = `server-card${isDisabled ? ' is-disabled' : ''}`;
+        card.style.animationDelay = `${index * 40}ms`;
 
         card.innerHTML = `
-            <div class="server-header">
-                <span class="server-name">
-                    ${displayName}
+            <div class="card-header">
+                <div class="card-title-row">
+                    <span class="server-name">${displayName}</span>
                     ${isCustom ? '<span class="server-badge">Custom</span>' : ''}
-                </span>
-                <label class="toggle-switch">
-                    <input type="checkbox" ${config.disabled ? '' : 'checked'} 
-                           onchange="toggleServer('${safeName}', this.checked)">
-                    <span class="slider"></span>
-                </label>
+                </div>
+                <div class="card-actions">
+                    <button class="btn-icon edit" title="Edit" onclick="showEditServerModal('${safeName}')">
+                        <svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" width="13" height="13">
+                            <path d="M10 2l2 2L4.5 11.5H2.5v-2L10 2Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon remove" title="Remove" onclick="removeServer('${safeName}')">
+                        <svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" width="13" height="13">
+                            <path d="M2 4h10M5 4V2.5h4V4M5.5 6.5v4M8.5 6.5v4M3 4l.75 7.5h6.5L11 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                    <label class="toggle-switch" title="${isDisabled ? 'Enable' : 'Disable'} server">
+                        <input type="checkbox" ${isDisabled ? '' : 'checked'}
+                               onchange="toggleServer('${safeName}', this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
             </div>
-            <div class="server-details">
-                <div class="server-path">${escapeHtml(serverPath)}</div>
-                ${Object.keys(envVars).length > 0 ? '<div class="env-vars">' + 
-                    Object.entries(envVars).map(([key]) => 
-                        `<div class="env-var">
-                            <span>${escapeHtml(key)}</span>
-                            <span>********</span>
-                        </div>`
-                    ).join('') + '</div>' : ''}
+            <div class="server-command">
+                <span class="cmd-label">cmd</span>
+                ${cmdDisplay}
             </div>
-            <div class="server-actions">
-                <button class="edit-button" onclick="showEditServerModal('${safeName}')">Edit</button>
-                <button class="remove-button" onclick="removeServer('${safeName}')">Remove</button>
-            </div>
+            ${envCount > 0 ? `
+            <div class="env-badge">
+                <div class="env-badge-dot"></div>
+                ${envCount} env var${envCount !== 1 ? 's' : ''}
+            </div>` : ''}
         `;
-        
+
         grid.appendChild(card);
     });
 }
 
+// ─── Render Tools ──────────────────────────────────────────────────────────────
 function renderTools() {
-    console.log('Rendering tools view');
     const toolsView = document.getElementById('toolsView');
+    if (!toolsView) return;
     toolsView.innerHTML = '';
 
     if (!toolsList || toolsList.length === 0) {
-        toolsView.innerHTML = '<div class="no-tools">No tools available or still loading...</div>';
+        toolsView.innerHTML = '<div class="no-tools">No tools available. Enable some servers and save changes first.</div>';
         return;
     }
 
-    // Group tools by server
     const toolsByServer = toolsList.reduce((acc, tool) => {
-        if (!acc[tool.server]) {
-            acc[tool.server] = [];
-        }
+        if (!acc[tool.server]) acc[tool.server] = [];
         acc[tool.server].push(tool);
         return acc;
     }, {});
 
-    // Create server sections
-    Object.entries(toolsByServer).forEach(([server, tools]) => {
-        const serverSection = document.createElement('div');
-        serverSection.className = 'server-tools';
-        
-        const content = `
-            <h2>${server}</h2>
-            <div class="tools-grid">
-                ${tools.map(tool => `
-                    <div class="tool-card">
-                        <div class="tool-name">${tool.name}</div>
-                        <div class="tool-description">${tool.description || 'No description available'}</div>
-                        <div class="tool-schema">
-                            ${JSON.stringify(tool.inputSchema || {}, null, 2)}
-                        </div>
-                    </div>
-                `).join('')}
+    Object.entries(toolsByServer).forEach(([server, tools], sectionIndex) => {
+        const section = document.createElement('div');
+        section.className = 'tools-server-section expanded';
+        section.style.animationDelay = `${sectionIndex * 60}ms`;
+
+        const toolsHtml = tools.map(tool => {
+            const schemaStr = JSON.stringify(tool.inputSchema || {}, null, 2);
+            return `
+                <div class="tool-card">
+                    <div class="tool-name">${escapeHtml(tool.name)}</div>
+                    <div class="tool-description">${escapeHtml(tool.description || 'No description available')}</div>
+                    <button class="tool-schema-toggle" onclick="toggleToolSchema(this)">Show Schema</button>
+                    <pre class="tool-schema">${escapeHtml(schemaStr)}</pre>
+                </div>
+            `;
+        }).join('');
+
+        section.innerHTML = `
+            <div class="tools-server-header" onclick="toggleToolsSection(this.parentElement)">
+                <span class="tools-server-name">${escapeHtml(server)}</span>
+                <svg class="tools-chevron" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
             </div>
+            <div class="tools-grid">${toolsHtml}</div>
         `;
-        
-        serverSection.innerHTML = content;
-        toolsView.appendChild(serverSection);
+
+        toolsView.appendChild(section);
     });
 }
 
+function toggleToolsSection(section) {
+    section.classList.toggle('expanded');
+}
+
+function toggleToolSchema(btn) {
+    const schema = btn.nextElementSibling;
+    schema.classList.toggle('visible');
+    btn.textContent = schema.classList.contains('visible') ? 'Hide Schema' : 'Show Schema';
+}
+
+// ─── Render Removed Servers ────────────────────────────────────────────────────
+function renderRemovedServers() {
+    const section = document.getElementById('removedServersSection');
+    const list = document.getElementById('removedServersList');
+    const count = Object.keys(removedServers).length;
+
+    if (count === 0) {
+        section.style.display = 'none';
+        return;
+    }
+
+    section.style.display = 'block';
+    list.innerHTML = '';
+
+    Object.entries(removedServers).forEach(([name]) => {
+        const row = document.createElement('div');
+        row.className = 'removed-server-row';
+        row.innerHTML = `
+            <span class="removed-server-name">${escapeHtml(name)}</span>
+            <button class="btn-restore" onclick="restoreServer('${escapeAttr(name)}')">Restore</button>
+        `;
+        list.appendChild(row);
+    });
+}
+
+// ─── Server Toggle ─────────────────────────────────────────────────────────────
 function toggleServer(name, enabled) {
-    console.log('Toggling server:', name, enabled);
     if (mcpServers[name]) {
         mcpServers[name].disabled = !enabled;
+        // Update card disabled state without full re-render
+        const cards = document.querySelectorAll('.server-card');
+        cards.forEach(card => {
+            const nameEl = card.querySelector('.server-name');
+            if (nameEl && nameEl.textContent.trim() === name) {
+                card.classList.toggle('is-disabled', !enabled);
+            }
+        });
     }
 }
 
+// ─── Save Changes ──────────────────────────────────────────────────────────────
 async function saveChanges() {
-    console.log('Saving changes...');
     try {
-        // Filter out removed servers from mcpServers
         const serversToSave = {};
         Object.entries(mcpServers).forEach(([name, config]) => {
-            if (!removedServers[name]) {
-                serversToSave[name] = config;
-            }
+            if (!removedServers[name]) serversToSave[name] = config;
         });
 
         const result = await Backend.saveConfigs(serversToSave, removedServers);
-
         originalConfig = JSON.parse(JSON.stringify(serversToSave));
-        showMessage(result.message || 'Configurations saved successfully. Please restart Claude to apply changes.', false);
+        showToast(result.message || 'Saved. Restart Claude to apply changes.', 'success');
 
-        // Refresh tools list to reflect enabled/disabled servers
         const updatedTools = await Backend.getTools();
         toolsList = updatedTools;
-        if (document.getElementById('toolsView').style.display !== 'none') {
-            renderTools();
-        }
+        if (currentView === 'tools') renderTools();
     } catch (error) {
         console.error('Error saving configs:', error);
-        showMessage('Error saving configurations: ' + error.message);
+        showToast('Error saving configurations: ' + error.message, 'error');
     }
 }
 
-// Initialize the app
-console.log('Initializing MCP Manager...');
-window.onload = loadConfigs;
+// ─── Search Filter ─────────────────────────────────────────────────────────────
+function filterServers(query) {
+    const q = query.trim().toLowerCase();
+    document.querySelectorAll('.server-card').forEach(card => {
+        const name = card.querySelector('.server-name');
+        if (!name) return;
+        const matches = !q || name.textContent.toLowerCase().includes(q);
+        card.classList.toggle('is-hidden', !matches);
+    });
+}
 
-// Export functions for global access
-window.showView = showView;
-window.toggleServer = toggleServer;
-window.saveChanges = saveChanges;
-
-// Modal functions
+// ─── Add Server Modal ──────────────────────────────────────────────────────────
 function showAddServerModal() {
     document.getElementById('modalTitle').textContent = 'Add Server';
     document.getElementById('editingServerName').value = '';
     document.getElementById('serverName').value = '';
+    document.getElementById('serverName').disabled = false;
     document.getElementById('serverCommand').value = '';
     document.getElementById('serverArgs').value = '';
     document.getElementById('envVarsContainer').innerHTML = '';
-    document.getElementById('serverName').disabled = false;
     document.getElementById('serverModal').style.display = 'flex';
 }
 
 function showEditServerModal(name) {
     const server = mcpServers[name];
     if (!server) return;
-    
+
     document.getElementById('modalTitle').textContent = 'Edit Server';
     document.getElementById('editingServerName').value = name;
     document.getElementById('serverName').value = name;
     document.getElementById('serverName').disabled = true;
     document.getElementById('serverCommand').value = server.command || '';
     document.getElementById('serverArgs').value = Array.isArray(server.args) ? server.args.join('\n') : '';
-    
-    // Populate environment variables
+
     const envVarsContainer = document.getElementById('envVarsContainer');
     envVarsContainer.innerHTML = '';
     if (server.env) {
-        Object.entries(server.env).forEach(([key, value]) => {
-            addEnvVarField(key, value);
-        });
+        Object.entries(server.env).forEach(([key, value]) => addEnvVarField(key, value));
     }
-    
+
     document.getElementById('serverModal').style.display = 'flex';
 }
 
@@ -393,183 +464,99 @@ function addEnvVarField(key = '', value = '') {
     row.innerHTML = `
         <input type="text" placeholder="KEY" value="${escapeAttr(key)}" class="env-key">
         <input type="text" placeholder="VALUE" value="${escapeAttr(value)}" class="env-value">
-        <button type="button" class="remove-env-button" onclick="this.parentElement.remove()">Remove</button>
+        <button type="button" class="btn-remove-env" onclick="this.parentElement.remove()" title="Remove">×</button>
     `;
     container.appendChild(row);
 }
 
 function saveServer(event) {
     event.preventDefault();
-    
+
     const editingName = document.getElementById('editingServerName').value;
     const name = document.getElementById('serverName').value.trim();
     const command = document.getElementById('serverCommand').value.trim();
     const argsText = document.getElementById('serverArgs').value;
-    
-    // Validation
-    if (!name) {
-        showMessage('Server name is required');
+
+    if (!name) { showToast('Server name is required', 'error'); return; }
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        showToast('Name can only contain letters, numbers, hyphens, and underscores', 'error');
         return;
     }
-    const validName = /^[a-zA-Z0-9_-]+$/;
-    if (!validName.test(name)) {
-        showMessage('Server name can only contain letters, numbers, hyphens, and underscores');
-        return;
-    }
-    if (!command) {
-        showMessage('Command is required');
-        return;
-    }
-    
-    // Check for duplicate names when adding new server
+    if (!command) { showToast('Command is required', 'error'); return; }
     if (!editingName && mcpServers[name]) {
-        showMessage('A server with this name already exists');
+        showToast('A server with this name already exists', 'error');
         return;
     }
-    
-    // Parse arguments
-    const args = argsText.split('\n').map(arg => arg.trim()).filter(arg => arg);
-    
-    // Parse environment variables
+
+    const args = argsText.split('\n').map(a => a.trim()).filter(Boolean);
+
     const env = {};
     document.querySelectorAll('.env-var-row').forEach(row => {
         const key = row.querySelector('.env-key').value.trim();
         const value = row.querySelector('.env-value').value;
-        if (key) {
-            env[key] = value;
-        }
+        if (key) env[key] = value;
     });
-    
-    // Create server config — only mark as custom for new servers or already-custom ones
+
     const isCustom = !editingName || !!(customServers[editingName]);
-    const serverConfig = {
-        command,
-        args,
-        env: Object.keys(env).length > 0 ? env : undefined,
-        custom: isCustom ? true : undefined
-    };
-    
-    // Remove undefined values
-    Object.keys(serverConfig).forEach(key => {
-        if (serverConfig[key] === undefined) {
-            delete serverConfig[key];
-        }
-    });
-    
-    // Update servers
+    const serverConfig = { command, args };
+    if (Object.keys(env).length > 0) serverConfig.env = env;
+    if (isCustom) serverConfig.custom = true;
+
     if (editingName && editingName !== name) {
-        // Rename server
         delete mcpServers[editingName];
         delete customServers[editingName];
     }
-    
+
     mcpServers[name] = serverConfig;
-    if (isCustom) {
-        customServers[name] = serverConfig;
-    }
-    
-    // Remove from removed servers if it was there
+    if (isCustom) customServers[name] = serverConfig;
+
     if (removedServers[name]) {
         delete removedServers[name];
         renderRemovedServers();
     }
-    
+
     renderServers();
     hideAddServerModal();
-    showMessage('Server saved successfully', false);
+    showToast('Server saved successfully', 'success');
 }
 
+// ─── Remove / Restore Server ───────────────────────────────────────────────────
 function removeServer(name) {
-    if (!confirm(`Are you sure you want to remove "${name}"?`)) {
-        return;
-    }
-    
-    // Move to removed servers
-    removedServers[name] = mcpServers[name];
-    
-    // Remove from active servers
-    delete mcpServers[name];
-    delete customServers[name];
-    
-    // Also remove from defaultServers tracking if it was there
-    // so it doesn't get re-added on reload
-    if (defaultServers[name]) {
-        // Mark as removed from defaults
-        removedServers[name] = { ...removedServers[name], _removedFromDefaults: true };
-    }
-    
-    renderServers();
-    renderRemovedServers();
-    showMessage('Server removed. You can restore it from the Removed Servers section.', false);
+    showConfirmModal(
+        `Remove "${name}"?\n\nYou can restore it from the Removed Servers section below.`,
+        () => {
+            removedServers[name] = mcpServers[name];
+            delete mcpServers[name];
+            delete customServers[name];
+            if (defaultServers[name]) {
+                removedServers[name] = { ...removedServers[name], _removedFromDefaults: true };
+            }
+            renderServers();
+            renderRemovedServers();
+            showToast('Server removed.', 'info');
+        }
+    );
 }
 
 function restoreServer(name) {
-    // Move back to active servers
     const config = removedServers[name];
     mcpServers[name] = config;
-    
-    // Only add to customServers if it was a custom server
-    if (config.custom) {
-        customServers[name] = config;
-    }
-    
-    // Remove the _removedFromDefaults flag if present
-    if (mcpServers[name]._removedFromDefaults) {
-        delete mcpServers[name]._removedFromDefaults;
-    }
-    
-    // Remove from removed servers
+    if (config.custom) customServers[name] = config;
+    if (mcpServers[name]._removedFromDefaults) delete mcpServers[name]._removedFromDefaults;
     delete removedServers[name];
-    
     renderServers();
     renderRemovedServers();
-    showMessage('Server restored successfully', false);
+    showToast('Server restored.', 'success');
 }
 
-function toggleRemovedSection() {
-    const content = document.getElementById('removedServersContent');
-    const icon = document.getElementById('removedToggleIcon');
-    
-    if (content.style.display === 'none') {
-        content.style.display = 'block';
-        icon.textContent = '▲';
-    } else {
-        content.style.display = 'none';
-        icon.textContent = '▼';
-    }
-}
+// ─── Init ──────────────────────────────────────────────────────────────────────
+window.onload = loadConfigs;
 
-function renderRemovedServers() {
-    const section = document.getElementById('removedServersSection');
-    const list = document.getElementById('removedServersList');
-    const removedCount = Object.keys(removedServers).length;
-    
-    if (removedCount === 0) {
-        section.style.display = 'none';
-        return;
-    }
-    
-    section.style.display = 'block';
-    list.innerHTML = '';
-    
-    Object.entries(removedServers).forEach(([name, config]) => {
-        const card = document.createElement('div');
-        card.className = 'removed-server-card';
-        
-        card.innerHTML = `
-            <div class="server-name">${escapeHtml(name)}</div>
-            <div class="server-actions">
-                <button class="restore-button" onclick="restoreServer('${escapeAttr(name)}')">Restore</button>
-            </div>
-        `;
-        
-        list.appendChild(card);
-    });
-}
-
-// Note: renderServers is defined once above with edit/remove buttons and XSS escaping
-
-// Export new functions for global access
+// ─── Global exports ─────────────────────────────────────────────────────────────
+window.showView = showView;
+window.toggleServer = toggleServer;
+window.saveChanges = saveChanges;
+window.filterServers = filterServers;
 window.showAddServerModal = showAddServerModal;
 window.showEditServerModal = showEditServerModal;
 window.hideAddServerModal = hideAddServerModal;
@@ -577,7 +564,7 @@ window.addEnvVarField = addEnvVarField;
 window.saveServer = saveServer;
 window.removeServer = removeServer;
 window.restoreServer = restoreServer;
-window.toggleRemovedSection = toggleRemovedSection;
 window.loadSettings = loadSettings;
 window.toggleCursorIntegration = toggleCursorIntegration;
-window.toggleSettingsSection = toggleSettingsSection;
+window.toggleToolsSection = toggleToolsSection;
+window.toggleToolSchema = toggleToolSchema;

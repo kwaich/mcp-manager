@@ -55,6 +55,7 @@ window.__TAURI__.path.resourceDir()  // location of bundled config.example.json
 ## Config Files
 
 - **config.example.json** — Bundled as a Tauri resource (read-only). Used as the source of default server definitions. Previously users copied this to `config.json`; that step is no longer needed.
+- **config.json** — Written to `appDataDir()` (e.g. `~/Library/Application Support/com.mcp-manager.app/config.json`). Stores disabled servers, deleted servers, and removed defaults. Created automatically on first save.
 - **settings.json** — Written to `appDataDir()` (e.g. `~/Library/Application Support/com.mcp-manager.app/settings.json`). Created automatically on first save; defaults to `{ cursorIntegration: { enabled: true } }` when absent.
 - Claude Desktop config: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 - Cursor config: `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` (macOS)
@@ -62,9 +63,11 @@ window.__TAURI__.path.resourceDir()  // location of bundled config.example.json
 
 ## Key Patterns
 
-- Server enable/disable uses a `disabled` boolean on each server object. When saving to Claude Desktop, disabled servers are stripped entirely from the output config.
-- Internal metadata properties (`disabled`, `custom`, `_removedFromDefaults`) are stripped when writing to Claude Desktop's config via `filterDisabledServers()`.
-- Config merging (3-way): default servers from `config.example.json` are merged with Cursor saved config (if enabled) and Claude Desktop config, with saved values taking precedence. Servers not in defaults are marked `custom: true`.
-- Removed default servers are tracked via `_removedDefaults` array in the Cursor config file so they don't reappear on reload.
-- **Cursor integration toggle**: When disabled, `backend.js` skips reading/writing Cursor's config file entirely and uses only Claude Desktop config + defaults.
-- **First launch**: `getSettingsPath()` calls `mkdirRecursive(appDataDir())` before writing, ensuring the directory exists.
+- Server enable/disable uses a `disabled` boolean on each server object. When saving to Claude Desktop, disabled servers are stripped from the output config but their definitions are preserved in local `config.json` for re-enabling later.
+- Deleted custom servers are moved to `deletedServers` in local `config.json` instead of being permanently removed, allowing restoration.
+- Removed default servers are tracked in `removedDefaults` array in local `config.json` (migrated from old `_removedDefaults` in Cursor config).
+- Internal metadata properties (`disabled`, `custom`, `deleted`, `_removedFromDefaults`) are stripped when writing to Claude Desktop's config via `filterDisabledServers()`.
+- Config merging (4-way): default servers from `config.example.json` are merged with Cursor saved config, Claude Desktop config, and local config (disabled/deleted servers), with saved values taking precedence. Servers not in defaults are marked `custom: true`.
+- **Cursor integration toggle**: When disabled, `backend.js` skips reading/writing Cursor's config file entirely and uses only Claude Desktop config + defaults + local config.
+- **First launch**: `getSettingsPath()` and `getLocalConfigPath()` call `mkdirRecursive(appDataDir())` before writing, ensuring the directory exists.
+- **Migration**: On init, `_removedDefaults` from Cursor config is migrated to local `config.json` if present.
