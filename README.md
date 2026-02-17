@@ -1,60 +1,79 @@
 # MCP Server Manager
 
-A web-based GUI tool for managing Model Context Protocol (MCP) servers in Claude and Cursor. This tool allows you to easily enable/disable MCP servers and their tools through a user-friendly interface.
+A native desktop app for managing Model Context Protocol (MCP) servers in Claude Desktop and Cursor. Enable/disable servers, add custom ones, and sync configurations — all from a clean GUI without touching JSON files manually.
+
+Built with [Tauri v2](https://v2.tauri.app/) (Rust + WebView) and vanilla JS. No browser required.
+
+![MCP Server Manager Interface](https://github.com/MediaPublishing/mcp-manager/blob/main/MCP-Server-Manager.png?raw=true)
 
 ## Features
 
 - 🎛️ Enable/disable MCP servers with simple toggle switches
 - ➕ Add, edit, and remove custom MCP servers via a modal UI
-- 🔄 Changes are automatically synced between Claude and Cursor
+- 🔄 Changes are synced between Claude Desktop and Cursor
 - ⚙️ Toggle Cursor integration on/off from the Settings panel
-- 🛠️ View available tools for each server
+- 🛠️ View available tools for each enabled server
 - 🗑️ Remove servers with the ability to restore them later
 - 🔒 Secure handling of environment variables and API keys
-- 📱 Responsive design that works on any screen size
+- 🖥️ Native desktop app — launch from Dock/taskbar, no terminal needed
 
-![MCP Server Manager Interface](https://github.com/MediaPublishing/mcp-manager/blob/main/MCP-Server-Manager.png?raw=true)
+## Prerequisites
+
+- **macOS** (primary), Windows, or Linux
+- [Rust](https://rustup.rs/) — required to build the Tauri app
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+```
 
 ## Installation
 
-1. Clone this repository:
+1. Clone the repository:
 ```bash
 git clone https://github.com/yourusername/mcp-manager.git
 cd mcp-manager
 ```
 
-2. Install dependencies:
+2. Install Node dependencies:
 ```bash
 npm install
 ```
 
-3. Create a configuration file:
+3. Start in development mode:
 ```bash
-cp config.example.json config.json
+npm run dev
 ```
 
-4. Start the server:
+The app window opens automatically. First launch downloads and compiles Rust dependencies — this takes a few minutes. Subsequent launches are fast.
+
+## Build a distributable app
+
 ```bash
-npm start
+npm run build
 ```
 
-5. Open http://localhost:3456 in your browser
+Produces a `.app` bundle and `.dmg` installer on macOS (located in `src-tauri/target/release/bundle/`).
 
 ## Configuration
 
-The MCP Server Manager uses the following configuration files:
+MCP Server Manager reads and writes the following files:
 
-- `config.json`: Default server definitions (copy from `config.example.json`)
-- `settings.json`: App settings such as the Cursor integration toggle (created automatically on first use)
-- Claude config: Located at `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
-- Cursor config: Located at `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` (macOS)
+| File | Purpose |
+|------|---------|
+| `config.example.json` | Bundled default server definitions (read-only) |
+| `~/Library/Application Support/com.mcp-manager.app/settings.json` | App settings (Cursor integration toggle) — created automatically |
+| `~/Library/Application Support/Claude/claude_desktop_config.json` | Claude Desktop config (macOS) |
+| `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | Cursor config (macOS) |
 
-### Example Configuration
+Windows and Linux paths are handled automatically.
+
+### Example server definition
 
 ```json
 {
   "mcpServers": {
-    "example-server": {
+    "my-server": {
       "command": "node",
       "args": ["/path/to/server.js"],
       "env": {
@@ -67,26 +86,13 @@ The MCP Server Manager uses the following configuration files:
 
 ## Usage
 
-1. Launch the MCP Server Manager
-2. Use the toggle switches to enable/disable servers
-3. Click "+ Add Server" to add a custom MCP server
-4. Use the Edit/Remove buttons on server cards to manage existing servers
-5. Expand the Settings panel to enable/disable Cursor integration
-6. Click "Save Changes" to apply your changes
-7. Restart Claude to activate the new configuration
-
-## Keywords
-
-- Model Context Protocol (MCP)
-- Claude AI
-- Anthropic Claude
-- Cursor Editor
-- MCP Server Management
-- Claude Configuration
-- AI Tools Management
-- Claude Extensions
-- MCP Tools
-- AI Development Tools
+1. Launch the app (`npm run dev` or open the built `.app`)
+2. Toggle servers on/off with the switches on each card
+3. Click **+ Add Server** to add a custom MCP server
+4. Use **Edit** / **Remove** buttons to manage existing servers
+5. Expand **Settings** to toggle Cursor integration
+6. Click **Save Changes** — Claude Desktop config is updated immediately
+7. Restart Claude Desktop to activate the new configuration
 
 ## Contributing
 
@@ -98,10 +104,4 @@ The MCP Server Manager uses the following configuration files:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built for use with Anthropic's Claude AI
-- Compatible with the Cursor editor
-- Uses the Model Context Protocol (MCP)
+MIT — see [LICENSE](LICENSE) for details.

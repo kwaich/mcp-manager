@@ -1,0 +1,30 @@
+[package]
+name = "mcp-manager"
+version = "0.1.0"
+description = "MCP Server Manager desktop app"
+authors = []
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "mcp_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
