@@ -366,8 +366,15 @@ input, textarea {
     cursor: pointer;
     transition: background var(--dur-fast) var(--ease-smooth),
                 color var(--dur-fast) var(--ease-smooth),
-                transform var(--dur-fast) var(--ease-smooth);
+                transform var(--dur-fast) var(--ease-smooth),
+                opacity var(--dur-fast) var(--ease-smooth);
     opacity: 0;
+}
+
+.btn-icon:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
 }
 
 .btn-icon:active {
@@ -631,6 +638,11 @@ input:checked + .slider {
 input:checked + .slider::before {
     transform: translateX(16px);
     box-shadow: 0 1px 6px rgba(0,0,0,0.20), 0 0 1px rgba(0,0,0,0.08);
+}
+
+/* Keyboard focus indicator — shown on the visible slider element */
+.toggle-switch input:focus-visible + .slider {
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.35);
 }
 
 /* =============================================
@@ -914,6 +926,22 @@ input:checked + .slider::before {
     transform: scale(0.97);
 }
 
+.btn-save:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-save.is-dirty {
+    background: var(--orange);
+    box-shadow: 0 1px 4px rgba(255, 149, 0, 0.40);
+}
+
+.btn-save.is-dirty:hover {
+    background: #E8880A;
+    box-shadow: 0 2px 8px rgba(255, 149, 0, 0.50);
+}
+
 /* =============================================
    Modals
    ============================================= */
@@ -1095,6 +1123,14 @@ input:checked + .slider::before {
     box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
 }
 
+/* Error state for form inputs — add .has-error via JS when validation fails */
+.form-group input.has-error,
+.form-group textarea.has-error,
+.env-var-row input.has-error {
+    border-color: var(--red);
+    box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.14);
+}
+
 .btn-remove-env {
     width: 26px;
     height: 26px;
@@ -1260,4 +1296,65 @@ input:checked + .slider::before {
 @keyframes shimmer {
     from { background-position: -200% 0; }
     to { background-position: 200% 0; }
+}
+
+/* =============================================
+   Reduced Motion
+   ============================================= */
+@media (prefers-reduced-motion: reduce) {
+    /* Kill the repeating shimmer — most disorienting animation in the app */
+    .skeleton-card::after {
+        animation: none;
+        background: rgba(255, 255, 255, 0.30);
+    }
+
+    /* Strip translate transforms from entrance animations; keep opacity fades */
+    .view {
+        animation-name: viewFadeOnly;
+    }
+
+    .server-card,
+    .tools-server-section,
+    .settings-group {
+        animation-name: viewFadeOnly;
+    }
+
+    .modal-overlay {
+        animation: none;
+    }
+
+    .modal-content {
+        animation-name: viewFadeOnly;
+    }
+
+    .toast {
+        animation-name: viewFadeOnly;
+    }
+
+    .toast.exiting {
+        animation-name: toastFadeOut;
+    }
+
+    /* No transform on hover/active */
+    .server-card:hover {
+        transform: none;
+    }
+
+    .btn:active,
+    .btn-save:active,
+    .btn-restore:active,
+    .btn-remove-env:active,
+    .btn-icon:active {
+        transform: none;
+    }
+}
+
+@keyframes viewFadeOnly {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes toastFadeOut {
+    from { opacity: 1; }
+    to   { opacity: 0; }
 }

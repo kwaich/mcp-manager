@@ -18,6 +18,25 @@ function escapeAttr(str) {
     return String(str).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
 }
 
+// ─── Dirty State Tracking ─────────────────────────────────────────────────────
+function stableStringify(obj) {
+    if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+    if (Array.isArray(obj)) return '[' + obj.map(stableStringify).join(',') + ']';
+    const keys = Object.keys(obj).sort();
+    return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
+}
+
+function hasUnsavedChanges() {
+    if (stableStringify(mcpServers) !== stableStringify(originalConfig)) return true;
+    return Object.keys(removedServers).some(name => originalConfig[name]);
+}
+
+function updateDirtyState() {
+    const saveBtn = document.querySelector('.btn-save');
+    if (!saveBtn) return;
+    saveBtn.classList.toggle('is-dirty', hasUnsavedChanges());
+}
+
 // ─── Toast System ──────────────────────────────────────────────────────────────
 function showToast(message, type = 'info') {
     const container = document.getElementById('toastContainer');
@@ -94,6 +113,7 @@ async function loadConfigs() {
         });
 
         originalConfig = JSON.parse(JSON.stringify(mcpServers));
+        updateDirtyState();
 
         removeLoadingSkeletons();
         renderServers();
@@ -165,13 +185,26 @@ async function applyCursorToggle(enabled) {
 
 async function toggleCursorIntegration(enabled) {
     if (!enabled) {
+        const dirtyNote = hasUnsavedChanges()
+            ? '\n\n⚠️ You have unsaved changes that will be discarded.'
+            : '';
         showConfirmModal(
             'Disabling Cursor integration will:\n\n' +
             '• Stop reading from Cursor\'s MCP configuration\n' +
             '• Stop writing to Cursor\'s MCP configuration\n' +
-            '• Use Claude Desktop config as the source of truth\n\n' +
-            'Are you sure you want to continue?',
+            '• Use Claude Desktop config as the source of truth' +
+            dirtyNote + '\n\nAre you sure you want to continue?',
             async () => { await applyCursorToggle(false); },
+            () => { renderSettingsUI(); }
+        );
+        return;
+    }
+    if (hasUnsavedChanges()) {
+        showConfirmModal(
+            'Enabling Cursor integration will reload the server list.\n\n' +
+            '⚠️ You have unsaved changes that will be discarded.\n\n' +
+            'Are you sure you want to continue?',
+            async () => { await applyCursorToggle(true); },
             () => { renderSettingsUI(); }
         );
         return;
@@ -180,19 +213,33 @@ async function toggleCursorIntegration(enabled) {
 }
 
 // ─── Confirm Modal ─────────────────────────────────────────────────────────────
+// Stored so hideConfirmModal can invoke it without simulating a DOM click.
+let _confirmCancelCb = null;
+
 function showConfirmModal(message, onConfirm, onCancel) {
     const modal = document.getElementById('confirmModal');
     document.getElementById('confirmMessage').textContent = message;
+    _confirmCancelCb = onCancel || null;
     modal.style.display = 'flex';
 
     document.getElementById('confirmOk').onclick = () => {
         modal.style.display = 'none';
+        _confirmCancelCb = null;
         onConfirm();
     };
     document.getElementById('confirmCancel').onclick = () => {
         modal.style.display = 'none';
-        if (onCancel) onCancel();
+        const cb = _confirmCancelCb;
+        _confirmCancelCb = null;
+        if (cb) cb();
     };
+}
+
+function hideConfirmModal() {
+    document.getElementById('confirmModal').style.display = 'none';
+    const cb = _confirmCancelCb;
+    _confirmCancelCb = null;
+    if (cb) cb();
 }
 
 // ─── View Navigation ───────────────────────────────────────────────────────────
@@ -221,6 +268,13 @@ function showView(view) {
     // Show toolbar only on servers view
     const toolbar = document.getElementById('toolbar');
     if (toolbar) toolbar.style.display = view === 'servers' ? 'flex' : 'none';
+
+    // Clear search filter on every view switch
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.value = '';
+        filterServers('');
+    }
 
     if (view === 'tools') renderTools();
 }
@@ -377,7 +431,13 @@ function renderRemovedServers() {
 // ─── Server Toggle ─────────────────────────────────────────────────────────────
 function toggleServer(name, enabled) {
     if (mcpServers[name]) {
-        mcpServers[name].disabled = !enabled;
+        // Delete rather than set false — originalConfig never has disabled:false,
+        // so setting false would cause a spurious dirty-state mismatch on round-trips.
+        if (enabled) {
+            delete mcpServers[name].disabled;
+        } else {
+            mcpServers[name].disabled = true;
+        }
         // Update card disabled state without full re-render
         const cards = document.querySelectorAll('.server-card');
         cards.forEach(card => {
@@ -386,11 +446,17 @@ function toggleServer(name, enabled) {
                 card.classList.toggle('is-disabled', !enabled);
             }
         });
+        updateDirtyState();
     }
 }
 
 // ─── Save Changes ──────────────────────────────────────────────────────────────
 async function saveChanges() {
+    const saveBtn = document.querySelector('.btn-save');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.classList.remove('is-dirty'); // show neutral blue while saving
+    }
     try {
         const serversToSave = {};
         Object.entries(mcpServers).forEach(([name, config]) => {
@@ -398,15 +464,24 @@ async function saveChanges() {
         });
 
         const result = await Backend.saveConfigs(serversToSave, removedServers);
-        originalConfig = JSON.parse(JSON.stringify(serversToSave));
-        showToast(result.message || 'Saved. Restart Claude to apply changes.', 'success');
+        if (result.success) {
+            originalConfig = JSON.parse(JSON.stringify(serversToSave));
+        }
+        showToast(result.message || 'Saved. Restart Claude to apply changes.', result.success ? 'success' : 'error');
 
-        const updatedTools = await Backend.getTools();
-        toolsList = updatedTools;
-        if (currentView === 'tools') renderTools();
+        // Isolated so a tools-fetch failure doesn't corrupt the save toast or dirty state.
+        try {
+            toolsList = await Backend.getTools();
+            if (currentView === 'tools') renderTools();
+        } catch (toolsErr) {
+            console.error('Error refreshing tools after save:', toolsErr);
+        }
     } catch (error) {
         console.error('Error saving configs:', error);
         showToast('Error saving configurations: ' + error.message, 'error');
+    } finally {
+        if (saveBtn) saveBtn.disabled = false;
+        updateDirtyState(); // restore correct state: clean on success, dirty on failure
     }
 }
 
@@ -466,6 +541,10 @@ function addEnvVarField(key = '', value = '') {
         <input type="text" placeholder="VALUE" value="${escapeAttr(value)}" class="env-value">
         <button type="button" class="btn-remove-env" onclick="this.parentElement.remove()" title="Remove">×</button>
     `;
+    // Clear error highlight as the user types
+    row.querySelector('.env-key').addEventListener('input', function () {
+        this.classList.remove('has-error');
+    });
     container.appendChild(row);
 }
 
@@ -483,7 +562,7 @@ function saveServer(event) {
         return;
     }
     if (!command) { showToast('Command is required', 'error'); return; }
-    if (!editingName && mcpServers[name]) {
+    if (mcpServers[name] && (!editingName || editingName !== name)) {
         showToast('A server with this name already exists', 'error');
         return;
     }
@@ -491,11 +570,26 @@ function saveServer(event) {
     const args = argsText.split('\n').map(a => a.trim()).filter(Boolean);
 
     const env = {};
+    let envError = false;
     document.querySelectorAll('.env-var-row').forEach(row => {
-        const key = row.querySelector('.env-key').value.trim();
+        const keyInput = row.querySelector('.env-key');
+        const key = keyInput.value.trim();
         const value = row.querySelector('.env-value').value;
-        if (key) env[key] = value;
+        keyInput.classList.remove('has-error');
+        if (key) {
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+                keyInput.classList.add('has-error');
+                if (!envError) {
+                    showToast(`Invalid env var key "${key}". Keys must start with a letter or underscore and contain only letters, numbers, or underscores.`, 'error');
+                    keyInput.focus();
+                }
+                envError = true;
+            } else {
+                env[key] = value;
+            }
+        }
     });
+    if (envError) return;
 
     const isCustom = !editingName || !!(customServers[editingName]);
     const serverConfig = { command, args };
@@ -517,6 +611,7 @@ function saveServer(event) {
 
     renderServers();
     hideAddServerModal();
+    updateDirtyState();
     showToast('Server saved successfully', 'success');
 }
 
@@ -533,6 +628,7 @@ function removeServer(name) {
             }
             renderServers();
             renderRemovedServers();
+            updateDirtyState();
             showToast('Server removed.', 'info');
         }
     );
@@ -546,8 +642,19 @@ function restoreServer(name) {
     delete removedServers[name];
     renderServers();
     renderRemovedServers();
+    updateDirtyState();
     showToast('Server restored.', 'success');
 }
+
+// ─── Keyboard Shortcuts ────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('serverModal').style.display !== 'none') {
+        hideAddServerModal();
+    } else if (document.getElementById('confirmModal').style.display !== 'none') {
+        hideConfirmModal();
+    }
+});
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
 window.onload = loadConfigs;
@@ -564,6 +671,7 @@ window.addEnvVarField = addEnvVarField;
 window.saveServer = saveServer;
 window.removeServer = removeServer;
 window.restoreServer = restoreServer;
+window.hideConfirmModal = hideConfirmModal;
 window.loadSettings = loadSettings;
 window.toggleCursorIntegration = toggleCursorIntegration;
 window.toggleToolsSection = toggleToolsSection;

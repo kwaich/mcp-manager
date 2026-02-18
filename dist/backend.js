@@ -8,6 +8,9 @@ const Backend = (() => {
     let _settingsPath = null;
     let _localConfigPath = null;
 
+    // ─── Cached state ────────────────────────────────────────────────────────
+    let _lastMergedServers = null; // populated by getMergedConfig, consumed by getTools
+
     // ─── Guards ───────────────────────────────────────────────────────────────
 
     function requireTauri() {
@@ -155,11 +158,21 @@ const Backend = (() => {
     // ─── Config file helpers ──────────────────────────────────────────────────
 
     async function readConfigFile(filePath) {
+        let data;
         try {
-            const data = await readTextFile(filePath);
+            data = await readTextFile(filePath);
+        } catch (readError) {
+            // File not found is expected; anything else (permissions, etc.) is worth noting
+            const msg = String(readError);
+            if (!msg.includes('os error 2') && !msg.includes('No such file') && !msg.includes('not found')) {
+                console.warn(`Unexpected error reading ${filePath}:`, readError);
+            }
+            return { mcpServers: {} };
+        }
+        try {
             return JSON.parse(data);
-        } catch (_) {
-            // File not found or parse error — return empty config
+        } catch (parseError) {
+            console.warn(`Failed to parse JSON from ${filePath}:`, parseError);
             return { mcpServers: {} };
         }
     }
@@ -167,11 +180,21 @@ const Backend = (() => {
     // ─── Settings ─────────────────────────────────────────────────────────────
 
     async function readSettings() {
+        const sp = await getSettingsPath();
+        let data;
         try {
-            const sp = await getSettingsPath();
-            const data = await readTextFile(sp);
+            data = await readTextFile(sp);
+        } catch (readError) {
+            const msg = String(readError);
+            if (!msg.includes('os error 2') && !msg.includes('No such file') && !msg.includes('not found')) {
+                console.warn('Unexpected error reading settings:', readError);
+            }
+            return { cursorIntegration: { enabled: true } };
+        }
+        try {
             return JSON.parse(data);
-        } catch (_) {
+        } catch (parseError) {
+            console.warn('Failed to parse settings JSON:', parseError);
             return { cursorIntegration: { enabled: true } };
         }
     }
@@ -184,18 +207,22 @@ const Backend = (() => {
     // ─── Local config (app settings dir) ───────────────────────────────────────
 
     async function readLocalConfig() {
+        const cp = await getLocalConfigPath();
+        let data;
         try {
-            const cp = await getLocalConfigPath();
-            const data = await readTextFile(cp);
+            data = await readTextFile(cp);
+        } catch (readError) {
+            const msg = String(readError);
+            if (!msg.includes('os error 2') && !msg.includes('No such file') && !msg.includes('not found')) {
+                console.warn('Unexpected error reading local config:', readError);
+            }
+            return { version: 1, disabledServers: [], serverDefinitions: {}, deletedServers: {}, removedDefaults: [] };
+        }
+        try {
             return JSON.parse(data);
-        } catch (_) {
-            return {
-                version: 1,
-                disabledServers: [],
-                serverDefinitions: {},
-                deletedServers: {},
-                removedDefaults: []
-            };
+        } catch (parseError) {
+            console.warn('Failed to parse local config JSON:', parseError);
+            return { version: 1, disabledServers: [], serverDefinitions: {}, deletedServers: {}, removedDefaults: [] };
         }
     }
 
@@ -337,7 +364,7 @@ const Backend = (() => {
 
         // 4.5. Restore enabled custom servers from local backup (if missing from Claude/Cursor)
         Object.entries(serverDefinitions).forEach(([name, config]) => {
-            if (!mergedServers[name] && !disabledServers.includes(name) && !defaultConfig.mcpServers?.[name]) {
+            if (!mergedServers[name] && !disabledServers.includes(name) && !defaultConfig.mcpServers?.[name] && !deletedServers[name]) {
                 mergedServers[name] = { ...config, custom: true };
             }
         });
@@ -357,36 +384,21 @@ const Backend = (() => {
         });
 
         console.log('Returning merged config with servers:', Object.keys(mergedServers));
+        _lastMergedServers = mergedServers;
         return { mcpServers: mergedServers, removedDefaults };
     }
 
     // Mirrors GET /api/tools
     async function getTools() {
         console.log('getTools()');
-        const { CURSOR_CONFIG_PATH, CLAUDE_CONFIG_PATH } = await getConfigPaths();
-        const settings = await readSettings();
-        const cursorEnabled = settings.cursorIntegration?.enabled ?? true;
 
-        const defaultConfig = await readDefaultConfig();
-        const mergedServers = {};
-
-        Object.entries(defaultConfig.mcpServers || {}).forEach(([name, config]) => {
-            mergedServers[name] = { ...config };
-        });
-
-        if (cursorEnabled) {
-            const cursorConfig = await readConfigFile(CURSOR_CONFIG_PATH);
-            Object.entries(cursorConfig.mcpServers || {}).forEach(([name, config]) => {
-                mergedServers[name] = { ...mergedServers[name], ...config };
-            });
+        // Use cached merged servers if available (avoids re-reading disk after getMergedConfig).
+        // Cold path delegates to getMergedConfig so disabled/deleted local state is always applied.
+        let mergedServers = _lastMergedServers;
+        if (!mergedServers) {
+            const result = await getMergedConfig();
+            mergedServers = result.mcpServers;
         }
-
-        const claudeConfig = await readConfigFile(CLAUDE_CONFIG_PATH);
-        Object.entries(claudeConfig.mcpServers || {}).forEach(([name, config]) => {
-            if (!mergedServers[name]) {
-                mergedServers[name] = { ...config };
-            }
-        });
 
         const toolsMap = {
             'mcp-manager': [{
@@ -409,6 +421,7 @@ const Backend = (() => {
     // Mirrors POST /api/save-configs
     async function saveConfigs(mcpServers, removedServers) {
         console.log('saveConfigs()');
+        _lastMergedServers = null; // invalidate cache so getTools re-reads after save
         const { CURSOR_CONFIG_PATH, CLAUDE_CONFIG_PATH } = await getConfigPaths();
         const settings = await readSettings();
         const cursorEnabled = settings.cursorIntegration?.enabled ?? true;
@@ -447,7 +460,7 @@ const Backend = (() => {
             } else if (isDisabled) {
                 // Disabled servers go to disabledServers list with their definitions
                 disabledServers.push(name);
-                const { disabled: _, custom: __, deleted: ___, ...serverConfig } = server;
+                const { disabled: _, deleted: __, ...serverConfig } = server;
                 serverDefinitions[name] = serverConfig;
             } else if (!isRemovedDefault) {
                 // Enabled server — back up definition to local config
@@ -491,6 +504,8 @@ const Backend = (() => {
 
         const fullConfig = { mcpServers: enabledServers };
 
+        const writeErrors = [];
+
         // Save to Cursor (UI state persistence) if integration enabled
         if (cursorEnabled) {
             try {
@@ -498,6 +513,7 @@ const Backend = (() => {
                 console.log('Saved config to Cursor settings');
             } catch (error) {
                 console.warn('Failed to save Cursor config:', error);
+                writeErrors.push('Cursor');
             }
         } else {
             console.log('Cursor integration disabled, skipping Cursor config write');
@@ -517,6 +533,14 @@ const Backend = (() => {
             console.log('Saved config to Claude settings');
         } catch (error) {
             console.warn('Failed to save Claude config:', error);
+            writeErrors.push('Claude Desktop');
+        }
+
+        if (writeErrors.length > 0) {
+            return {
+                success: false,
+                message: `Failed to write to: ${writeErrors.join(', ')}. Local settings were saved.`
+            };
         }
 
         return {
