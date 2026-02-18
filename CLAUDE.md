@@ -10,7 +10,8 @@ MCP Server Manager is a **Tauri v2 desktop app** for managing Model Context Prot
 
 - `npm run dev` — Start the Tauri dev window (runs `tauri dev`)
 - `npm run build` — Build a distributable `.app` / `.dmg` (runs `tauri build`)
-- No test suite exists yet (`npm test` is a placeholder)
+- `npm test` — Run the vitest test suite
+- `npm run test:watch` — Run tests in watch mode
 - **Rust is required**: install via `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 
 ## Architecture
@@ -46,12 +47,9 @@ async function readTextFile(path) {
     return new TextDecoder().decode(bytes);
 }
 
-// tauri-plugin-fs v2.4+ — write requires TextEncoder payload + path in headers
+// tauri-plugin-fs v2.4+ — write with simple object payload
 async function writeTextFile(path, contents) {
-    const encoder = new TextEncoder();
-    await window.__TAURI__.core.invoke('plugin:fs|write_text_file', encoder.encode(contents), {
-        headers: { path: encodeURIComponent(path), options: JSON.stringify(undefined) }
-    });
+    await window.__TAURI__.core.invoke('plugin:fs|write_text_file', { path, contents });
 }
 
 // mkdir — unchanged from earlier versions

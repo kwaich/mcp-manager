@@ -56,17 +56,26 @@ npm run build
 
 Produces a `.app` bundle and `.dmg` installer on macOS (located in `src-tauri/target/release/bundle/`).
 
+## Testing
+
+```bash
+npm test           # Run tests once
+npm run test:watch # Run tests in watch mode
+```
+
 ## Configuration
 
 MCP Server Manager reads and writes the following files:
 
 | File | Purpose |
 |------|---------|
-| `config.example.json` | Bundled default server definitions (read-only) |
-| `~/Library/Application Support/com.mcpmanager.dev/config.json` | Local server registry — stores disabled/deleted servers and their definitions |
+| `config.example.json` | Bundled default server definitions (read-only, auto-included) — no need to copy this file |
+| `~/Library/Application Support/com.mcpmanager.dev/config.json` | Local server registry — stores disabled/deleted servers and their definitions (created automatically on first save) |
 | `~/Library/Application Support/com.mcpmanager.dev/settings.json` | App settings (Cursor integration toggle) — created automatically |
 | `~/Library/Application Support/Claude/claude_desktop_config.json` | Claude Desktop config (macOS) |
 | `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | Cursor config (macOS) |
+
+**Note:** You don't need to manually create any config files. The app creates its local config files automatically on first launch.
 
 Windows and Linux paths are handled automatically.
 
