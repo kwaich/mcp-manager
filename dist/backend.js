@@ -335,6 +335,13 @@ const Backend = (() => {
             }
         });
 
+        // 4.5. Restore enabled custom servers from local backup (if missing from Claude/Cursor)
+        Object.entries(serverDefinitions).forEach(([name, config]) => {
+            if (!mergedServers[name] && !disabledServers.includes(name) && !defaultConfig.mcpServers?.[name]) {
+                mergedServers[name] = { ...config, custom: true };
+            }
+        });
+
         // 5. Add deleted servers from local config (for restore capability)
         Object.entries(deletedServers).forEach(([name, config]) => {
             if (!mergedServers[name]) {
@@ -440,6 +447,10 @@ const Backend = (() => {
             } else if (isDisabled) {
                 // Disabled servers go to disabledServers list with their definitions
                 disabledServers.push(name);
+                const { disabled: _, custom: __, deleted: ___, ...serverConfig } = server;
+                serverDefinitions[name] = serverConfig;
+            } else if (!isRemovedDefault) {
+                // Enabled server — back up definition to local config
                 const { disabled: _, custom: __, deleted: ___, ...serverConfig } = server;
                 serverDefinitions[name] = serverConfig;
             }
