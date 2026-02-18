@@ -63,8 +63,8 @@ MCP Server Manager reads and writes the following files:
 | File | Purpose |
 |------|---------|
 | `config.example.json` | Bundled default server definitions (read-only) |
-| `~/Library/Application Support/com.mcp-manager.app/config.json` | Local server registry — stores disabled/deleted servers and their definitions |
-| `~/Library/Application Support/com.mcp-manager.app/settings.json` | App settings (Cursor integration toggle) — created automatically |
+| `~/Library/Application Support/com.mcpmanager.dev/config.json` | Local server registry — stores disabled/deleted servers and their definitions |
+| `~/Library/Application Support/com.mcpmanager.dev/settings.json` | App settings (Cursor integration toggle) — created automatically |
 | `~/Library/Application Support/Claude/claude_desktop_config.json` | Claude Desktop config (macOS) |
 | `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | Cursor config (macOS) |
 

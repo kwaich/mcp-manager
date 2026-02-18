@@ -32,7 +32,6 @@ ehthumbs.db
 Thumbs.db
 
 # Build output
-build/
 *.log
 
 # Tauri / Rust build artifacts

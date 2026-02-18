@@ -16,7 +16,7 @@ MCP Server Manager is a **Tauri v2 desktop app** for managing Model Context Prot
 ## Architecture
 
 ```
-Tauri Webview (index.html + backend.js + app.js)
+Tauri Webview (dist/index.html + dist/backend.js + dist/app.js)
     └── window.__TAURI__.core.invoke('plugin:fs|...') → tauri-plugin-fs → Config files
 ```
 
@@ -24,29 +24,42 @@ No build step for the frontend. No Express server. No `fetch()` calls.
 
 ### Frontend (Vanilla JS)
 
-- **index.html** — Single page with Servers and Tools tab views
-- **backend.js** — Replaces `routes.js`. All file I/O via Tauri IPC (`window.__TAURI__`). Exposes a `Backend` global with: `init()`, `getMergedConfig()`, `getTools()`, `saveConfigs()`, `readSettings()`, `writeSettings()`, `readDefaultConfig()`
-- **app.js** — UI logic. Calls `Backend.*` instead of `fetch()`. All functions exposed on `window` for inline HTML event handlers.
-- **styles.css** — Styling
+- **dist/index.html** — Single page with Servers, Tools, and Settings tab views
+- **dist/backend.js** — Replaces `routes.js`. All file I/O via Tauri IPC (`window.__TAURI__`). Exposes a `Backend` global with: `init()`, `getMergedConfig()`, `getTools()`, `saveConfigs()`, `readSettings()`, `writeSettings()`, `readDefaultConfig()`
+- **dist/app.js** — UI logic. Calls `Backend.*` instead of `fetch()`. All functions exposed on `window` for inline HTML event handlers.
+- **dist/styles.css** — Styling
 
 ### Tauri (Rust — zero custom commands)
 
 - **src-tauri/src/lib.rs** — Registers `tauri-plugin-fs`. Only Rust file that matters.
-- **src-tauri/tauri.conf.json** — App config: 1000×700 window, `withGlobalTauri: true`, bundles `config.example.json` as a resource, `frontendDist: "../"` serves project root.
+- **src-tauri/tauri.conf.json** — App config: 1000×700 window, `withGlobalTauri: true`, `titleBarStyle: "Transparent"`, bundles `config.example.json` as a resource, `frontendDist: "../dist"` serves the `dist/` directory.
 - **src-tauri/capabilities/default.json** — Filesystem allow-lists for Claude/Cursor config dirs on macOS, Windows, and Linux.
 - **src-tauri/Cargo.toml** — Dependencies: `tauri = "2"`, `tauri-plugin-fs = "2"`.
 
 ### Tauri JS API usage in `backend.js`
 
 ```js
-// File reads/writes — calls tauri-plugin-fs via IPC
-window.__TAURI__.core.invoke('plugin:fs|read_text_file', { path })
-window.__TAURI__.core.invoke('plugin:fs|write_text_file', { path, contents })
+// tauri-plugin-fs v2.4+ — read returns ArrayBuffer | number[] that must be decoded
+async function readTextFile(path) {
+    const arr = await window.__TAURI__.core.invoke('plugin:fs|read_text_file', { path });
+    const bytes = arr instanceof ArrayBuffer ? arr : Uint8Array.from(arr);
+    return new TextDecoder().decode(bytes);
+}
+
+// tauri-plugin-fs v2.4+ — write requires TextEncoder payload + path in headers
+async function writeTextFile(path, contents) {
+    const encoder = new TextEncoder();
+    await window.__TAURI__.core.invoke('plugin:fs|write_text_file', encoder.encode(contents), {
+        headers: { path: encodeURIComponent(path), options: JSON.stringify(undefined) }
+    });
+}
+
+// mkdir — unchanged from earlier versions
 window.__TAURI__.core.invoke('plugin:fs|mkdir', { path, options: { recursive: true } })
 
 // Path helpers (async — call into Rust)
 window.__TAURI__.path.homeDir()      // e.g. /Users/alice
-window.__TAURI__.path.appDataDir()   // e.g. ~/Library/Application Support/com.mcp-manager.app/
+window.__TAURI__.path.appDataDir()   // e.g. ~/Library/Application Support/com.mcpmanager.dev/
 window.__TAURI__.path.resourceDir()  // location of bundled config.example.json
 ```
 
@@ -55,8 +68,8 @@ window.__TAURI__.path.resourceDir()  // location of bundled config.example.json
 ## Config Files
 
 - **config.example.json** — Bundled as a Tauri resource (read-only). Used as the source of default server definitions. Previously users copied this to `config.json`; that step is no longer needed.
-- **config.json** — Written to `appDataDir()` (e.g. `~/Library/Application Support/com.mcp-manager.app/config.json`). Stores disabled servers, deleted servers, and removed defaults. Created automatically on first save.
-- **settings.json** — Written to `appDataDir()` (e.g. `~/Library/Application Support/com.mcp-manager.app/settings.json`). Created automatically on first save; defaults to `{ cursorIntegration: { enabled: true } }` when absent.
+- **config.json** — Written to `appDataDir()` (e.g. `~/Library/Application Support/com.mcpmanager.dev/config.json`). Stores disabled servers, deleted servers, and removed defaults. Created automatically on first save.
+- **settings.json** — Written to `appDataDir()` (e.g. `~/Library/Application Support/com.mcpmanager.dev/settings.json`). Created automatically on first save; defaults to `{ cursorIntegration: { enabled: true } }` when absent.
 - Claude Desktop config: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 - Cursor config: `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` (macOS)
 - Windows and Linux paths are handled in `backend.js:getConfigPaths()`
@@ -71,3 +84,7 @@ window.__TAURI__.path.resourceDir()  // location of bundled config.example.json
 - **Cursor integration toggle**: When disabled, `backend.js` skips reading/writing Cursor's config file entirely and uses only Claude Desktop config + defaults + local config.
 - **First launch**: `getSettingsPath()` and `getLocalConfigPath()` call `mkdirRecursive(appDataDir())` before writing, ensuring the directory exists.
 - **Migration**: On init, `_removedDefaults` from Cursor config is migrated to local `config.json` if present.
+- **Local config.json schema**:
+  ```json
+  { "version": 1, "disabledServers": [], "serverDefinitions": {}, "deletedServers": {}, "removedDefaults": [] }
+  ```
