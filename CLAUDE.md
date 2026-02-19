@@ -23,6 +23,11 @@ Tauri Webview (dist/index.html + dist/backend.js + dist/app.js)
 
 No build step for the frontend. No Express server. No `fetch()` calls.
 
+**Tauri v2 specifics (key differences from v1):**
+- Enum values are PascalCase: `"Overlay"` not `"overlay"`, `"Transparent"` not `"transparent"`
+- `confirm()` does not work in the WebView — use custom modal dialogs instead
+- fs/path APIs: use `window.__TAURI__.core.invoke('plugin:fs|...')` and `window.__TAURI__.path.*` (not v1 imports)
+
 ### Frontend (Vanilla JS)
 
 - **dist/index.html** — Single page with Servers, Tools, and Settings tab views
@@ -47,9 +52,12 @@ async function readTextFile(path) {
     return new TextDecoder().decode(bytes);
 }
 
-// tauri-plugin-fs v2.4+ — write with simple object payload
+// tauri-plugin-fs v2.4+ — write requires TextEncoder + headers (not a simple object)
 async function writeTextFile(path, contents) {
-    await window.__TAURI__.core.invoke('plugin:fs|write_text_file', { path, contents });
+    const encoder = new TextEncoder();
+    await window.__TAURI__.core.invoke('plugin:fs|write_text_file', encoder.encode(contents), {
+        headers: { path: encodeURIComponent(path), options: JSON.stringify(undefined) }
+    });
 }
 
 // mkdir — unchanged from earlier versions
@@ -71,6 +79,14 @@ window.__TAURI__.path.resourceDir()  // location of bundled config.example.json
 - Claude Desktop config: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 - Cursor config: `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` (macOS)
 - Windows and Linux paths are handled in `backend.js:getConfigPaths()`
+
+## Code Review
+
+When asked for code review, default to uncommitted changes (`git diff`), not branch diffs. If scope is ambiguous, clarify before starting.
+
+## Workflow Preferences
+
+When asked to plan or review, deliver results directly and concisely. Do not write intermediate plan files unless explicitly asked. Skip extensive codebase exploration if context is already available.
 
 ## Key Patterns
 
